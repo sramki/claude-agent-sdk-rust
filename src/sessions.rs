@@ -264,7 +264,7 @@ fn read_session_file(session_id: &str, directory: Option<&Path>) -> Option<Strin
 
 /// Resolves the on-disk path of a session JSONL file (first non-empty match).
 /// Mirrors `_resolve_session_file_path`.
-fn resolve_session_file_path(session_id: &str, directory: Option<&Path>) -> Option<PathBuf> {
+pub(crate) fn resolve_session_file_path(session_id: &str, directory: Option<&Path>) -> Option<PathBuf> {
     let file_name = format!("{session_id}.jsonl");
 
     let stat_candidate = |project_dir: &Path| -> Option<PathBuf> {

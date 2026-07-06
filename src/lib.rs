@@ -63,6 +63,7 @@ mod paths;
 pub mod runtime;
 mod sessions;
 pub mod store;
+mod store_import;
 mod store_read;
 pub mod types;
 
@@ -83,6 +84,7 @@ pub use sessions::{
 pub use store::{
     file_path_to_session_key, fold_session_summary, summary_entry_to_sdk_info, InMemorySessionStore,
 };
+pub use store_import::import_session_to_store;
 pub use store_read::{
     get_session_info_from_store, get_session_messages_from_store, get_subagent_messages_from_store,
     list_sessions_from_store, list_subagents_from_store,
