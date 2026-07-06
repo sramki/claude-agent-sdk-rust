@@ -714,8 +714,71 @@ fn buffer_exceeded_error(len: usize, max: usize) -> Error {
     )
 }
 
-/// Background task: read framed NDJSON lines from stdout, forward parsed values,
-/// then reap the process and surface a non-zero exit as a `ProcessError`.
+/// Frames NDJSON lines from a reader and forwards parsed values to `tx`.
+///
+/// Uses `read_until('\n')` so a *truncated* final line (EOF mid-write, no
+/// trailing newline) is dropped rather than surfaced as a decode error, while a
+/// complete (newline-terminated) corrupt line still surfaces one — matching the
+/// upstream framer/flush behavior. Returns `true` if it stopped because
+/// `shutdown` was signaled. Generic over the reader so it is unit-testable
+/// without a real subprocess.
+async fn pump_stdout<R>(
+    stdout: R,
+    shutdown: &mut oneshot::Receiver<()>,
+    max_buffer: usize,
+    tx: &mpsc::Sender<Result<Value>>,
+) -> bool
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut reader = BufReader::new(stdout);
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        buf.clear();
+        tokio::select! {
+            biased;
+            _ = &mut *shutdown => return true,
+            res = reader.read_until(b'\n', &mut buf) => match res {
+                Ok(0) => return false, // EOF, nothing pending
+                Ok(_) => {
+                    let had_newline = buf.last() == Some(&b'\n');
+                    if buf.len() > max_buffer {
+                        let _ = tx.send(Err(buffer_exceeded_error(buf.len(), max_buffer))).await;
+                        return false;
+                    }
+                    let line = String::from_utf8_lossy(&buf);
+                    match parse_stdout_line(&line) {
+                        Ok(Some(v)) => {
+                            if tx.send(Ok(v)).await.is_err() {
+                                return false; // receiver dropped
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            // Complete corrupt line -> real decode error;
+                            // truncated final line -> drop silently.
+                            if had_newline {
+                                let _ = tx.send(Err(e)).await;
+                            }
+                            return false;
+                        }
+                    }
+                    if !had_newline {
+                        return false; // EOF reached on a partial final line
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(Error::Io(e))).await;
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+/// Background task: frame + parse stdout, then reap the process and surface a
+/// non-zero exit as a `ProcessError` (or run the graceful shutdown escalation
+/// when `close()` signaled).
 async fn read_loop(
     mut child: Child,
     stdout: ChildStdout,
@@ -727,42 +790,8 @@ async fn read_loop(
     if let Some(p) = pid {
         reaper::register(p);
     }
-    let mut lines = BufReader::new(stdout).lines();
-    let mut shutting_down = false;
-    loop {
-        tokio::select! {
-            biased;
-            _ = &mut shutdown => {
-                shutting_down = true;
-                break;
-            }
-            next = lines.next_line() => match next {
-                Ok(Some(line)) => {
-                    if line.len() > max_buffer {
-                        let _ = tx.send(Err(buffer_exceeded_error(line.len(), max_buffer))).await;
-                        break;
-                    }
-                    match parse_stdout_line(&line) {
-                        Ok(Some(v)) => {
-                            if tx.send(Ok(v)).await.is_err() {
-                                return; // receiver dropped
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            let _ = tx.send(Err(e)).await;
-                            break;
-                        }
-                    }
-                }
-                Ok(None) => break, // EOF
-                Err(e) => {
-                    let _ = tx.send(Err(Error::Io(e))).await;
-                    break;
-                }
-            }
-        }
-    }
+
+    let shutting_down = pump_stdout(stdout, &mut shutdown, max_buffer, &tx).await;
 
     if shutting_down {
         // stdin was closed by close() before signaling; give the CLI a grace
@@ -830,10 +859,19 @@ async fn stderr_loop(stderr: tokio::process::ChildStderr, callback: StderrCallba
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ClaudeAgentOptions, PermissionMode, SystemPrompt};
+    use crate::types::{
+        AgentDefinition, ClaudeAgentOptions, EffortLevel, McpServerConfig, McpServers,
+        McpStdioServerConfig, PermissionMode, SandboxSettings, SdkBeta, SdkPluginConfig, Skills,
+        SystemPrompt, SystemPromptPreset, TaskBudget, ThinkingConfig, ThinkingDisplay, ToolsConfig,
+    };
+    use std::collections::HashMap;
 
     fn base() -> ClaudeAgentOptions {
         ClaudeAgentOptions::default()
+    }
+
+    fn has_pair(cmd: &[String], flag: &str, val: &str) -> bool {
+        cmd.windows(2).any(|w| w[0] == flag && w[1] == val)
     }
 
     #[test]
@@ -924,5 +962,313 @@ mod tests {
     fn version_triple_parse() {
         assert_eq!(parse_version_triple("2.1.3 (extra)"), Some((2, 1, 3)));
         assert_eq!(parse_version_triple("nope"), None);
+    }
+
+    // --- Additional build_command cases (ported from test_transport.py) ---
+
+    #[test]
+    fn no_print_flag_ever() {
+        assert!(!build_command("/c", &base()).iter().any(|a| a == "--print"));
+    }
+
+    #[test]
+    fn include_hook_events_toggles() {
+        let mut o = base();
+        o.include_hook_events = true;
+        assert!(build_command("/c", &o).contains(&"--include-hook-events".to_string()));
+        assert!(!build_command("/c", &base()).contains(&"--include-hook-events".to_string()));
+    }
+
+    #[test]
+    fn strict_mcp_config_toggles() {
+        let mut o = base();
+        o.strict_mcp_config = true;
+        assert!(build_command("/c", &o).contains(&"--strict-mcp-config".to_string()));
+        assert!(!build_command("/c", &base()).contains(&"--strict-mcp-config".to_string()));
+    }
+
+    #[test]
+    fn effort_and_dont_ask_and_fallback() {
+        let mut o = base();
+        o.effort = Some(EffortLevel::Xhigh);
+        o.permission_mode = Some(PermissionMode::DontAsk);
+        o.model = Some("opus".into());
+        o.fallback_model = Some("sonnet".into());
+        let cmd = build_command("/c", &o);
+        assert!(has_pair(&cmd, "--effort", "xhigh"));
+        assert!(has_pair(&cmd, "--permission-mode", "dontAsk"));
+        assert!(has_pair(&cmd, "--model", "opus"));
+        assert!(has_pair(&cmd, "--fallback-model", "sonnet"));
+    }
+
+    #[test]
+    fn system_prompt_preset_no_append_emits_nothing() {
+        let mut o = base();
+        o.system_prompt = Some(SystemPrompt::Preset(SystemPromptPreset {
+            preset: "claude_code".into(),
+            append: None,
+            exclude_dynamic_sections: None,
+        }));
+        let cmd = build_command("/c", &o);
+        assert!(!cmd.iter().any(|a| a == "--system-prompt"));
+        assert!(!cmd.iter().any(|a| a == "--append-system-prompt"));
+    }
+
+    #[test]
+    fn system_prompt_preset_with_append() {
+        let mut o = base();
+        o.system_prompt = Some(SystemPrompt::Preset(SystemPromptPreset {
+            preset: "claude_code".into(),
+            append: Some("Be concise.".into()),
+            exclude_dynamic_sections: None,
+        }));
+        let cmd = build_command("/c", &o);
+        assert!(has_pair(&cmd, "--append-system-prompt", "Be concise."));
+    }
+
+    #[test]
+    fn system_prompt_file() {
+        let mut o = base();
+        o.system_prompt = Some(SystemPrompt::File("/path/to/prompt.md".into()));
+        let cmd = build_command("/c", &o);
+        assert!(has_pair(&cmd, "--system-prompt-file", "/path/to/prompt.md"));
+        assert!(!cmd.iter().any(|a| a == "--system-prompt"));
+    }
+
+    #[test]
+    fn task_budget_toggles() {
+        let mut o = base();
+        o.task_budget = Some(TaskBudget { total: 100_000 });
+        assert!(has_pair(&build_command("/c", &o), "--task-budget", "100000"));
+        assert!(!build_command("/c", &base()).iter().any(|a| a == "--task-budget"));
+    }
+
+    #[test]
+    fn deprecated_max_thinking_tokens() {
+        let mut o = base();
+        o.max_thinking_tokens = Some(5000);
+        assert!(has_pair(&build_command("/c", &o), "--max-thinking-tokens", "5000"));
+    }
+
+    #[test]
+    fn thinking_variants() {
+        let mut adaptive = base();
+        adaptive.thinking = Some(ThinkingConfig::Adaptive { display: None });
+        let cmd = build_command("/c", &adaptive);
+        assert!(has_pair(&cmd, "--thinking", "adaptive"));
+        assert!(!cmd.iter().any(|a| a == "--max-thinking-tokens"));
+
+        let mut disabled = base();
+        disabled.thinking = Some(ThinkingConfig::Disabled);
+        assert!(has_pair(&build_command("/c", &disabled), "--thinking", "disabled"));
+
+        // thinking takes precedence over the deprecated max_thinking_tokens.
+        let mut both = base();
+        both.thinking = Some(ThinkingConfig::Enabled { budget_tokens: 5000, display: None });
+        both.max_thinking_tokens = Some(999);
+        let cmd = build_command("/c", &both);
+        assert!(has_pair(&cmd, "--max-thinking-tokens", "5000"));
+        assert!(!cmd.iter().any(|a| a == "999"));
+    }
+
+    #[test]
+    fn thinking_display_forwarded_only_when_present() {
+        let mut with = base();
+        with.thinking = Some(ThinkingConfig::Adaptive { display: Some(ThinkingDisplay::Summarized) });
+        assert!(has_pair(&build_command("/c", &with), "--thinking-display", "summarized"));
+
+        let mut without = base();
+        without.thinking = Some(ThinkingConfig::Adaptive { display: None });
+        assert!(!build_command("/c", &without).iter().any(|a| a == "--thinking-display"));
+    }
+
+    #[test]
+    fn tools_list_empty_preset_and_absent() {
+        let mut list = base();
+        list.tools = Some(ToolsConfig::List(vec!["Bash".into(), "Read".into()]));
+        assert!(has_pair(&build_command("/c", &list), "--tools", "Bash,Read"));
+
+        let mut empty = base();
+        empty.tools = Some(ToolsConfig::List(vec![]));
+        assert!(has_pair(&build_command("/c", &empty), "--tools", ""));
+
+        let mut preset = base();
+        preset.tools = Some(ToolsConfig::Preset);
+        assert!(has_pair(&build_command("/c", &preset), "--tools", "default"));
+
+        assert!(!build_command("/c", &base()).iter().any(|a| a == "--tools"));
+    }
+
+    #[test]
+    fn betas_and_add_dirs_and_plugins() {
+        let mut o = base();
+        o.betas = vec![SdkBeta::Context1m20250807];
+        o.add_dirs = vec!["/a".into(), "/b".into()];
+        o.plugins = vec![SdkPluginConfig::local("/plug")];
+        let cmd = build_command("/c", &o);
+        assert!(has_pair(&cmd, "--betas", "context-1m-2025-08-07"));
+        assert!(has_pair(&cmd, "--add-dir", "/a"));
+        assert!(has_pair(&cmd, "--add-dir", "/b"));
+        assert!(has_pair(&cmd, "--plugin-dir", "/plug"));
+    }
+
+    #[test]
+    fn mcp_servers_map_and_path() {
+        let mut map = base();
+        let mut servers = HashMap::new();
+        servers.insert(
+            "fs".to_string(),
+            McpServerConfig::Stdio(McpStdioServerConfig {
+                command: "node".into(),
+                args: vec![],
+                env: HashMap::new(),
+            }),
+        );
+        map.mcp_servers = McpServers::Map(servers);
+        let cmd = build_command("/c", &map);
+        let idx = cmd.iter().position(|a| a == "--mcp-config").unwrap();
+        assert!(cmd[idx + 1].contains("\"mcpServers\""));
+        assert!(cmd[idx + 1].contains("\"fs\""));
+
+        let mut path = base();
+        path.mcp_servers = McpServers::Path("/cfg.json".into());
+        assert!(has_pair(&build_command("/c", &path), "--mcp-config", "/cfg.json"));
+    }
+
+    #[test]
+    fn sandbox_merges_into_settings_json() {
+        let mut o = base();
+        o.sandbox = Some(SandboxSettings {
+            enabled: Some(true),
+            ..Default::default()
+        });
+        let cmd = build_command("/c", &o);
+        let idx = cmd.iter().position(|a| a == "--settings").unwrap();
+        assert!(cmd[idx + 1].contains("\"sandbox\""));
+        assert!(cmd[idx + 1].contains("\"enabled\":true"));
+    }
+
+    #[test]
+    fn output_format_json_schema() {
+        let mut o = base();
+        o.output_format = Some(
+            serde_json::json!({"type": "json_schema", "schema": {"type": "object"}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let cmd = build_command("/c", &o);
+        let idx = cmd.iter().position(|a| a == "--json-schema").unwrap();
+        assert_eq!(cmd[idx + 1], "{\"type\":\"object\"}");
+    }
+
+    #[test]
+    fn skills_named_list_and_no_duplicates() {
+        let mut o = base();
+        o.skills = Some(Skills::List(vec!["a".into(), "b".into()]));
+        o.allowed_tools = vec!["Skill(a)".into(), "Read".into()];
+        let cmd = build_command("/c", &o);
+        let idx = cmd.iter().position(|a| a == "--allowedTools").unwrap();
+        let allowed = &cmd[idx + 1];
+        // Existing Skill(a) not duplicated; Skill(b) appended.
+        assert_eq!(allowed.matches("Skill(a)").count(), 1);
+        assert!(allowed.contains("Skill(b)"));
+        assert!(allowed.contains("Read"));
+    }
+
+    #[test]
+    fn skills_preserve_user_setting_sources() {
+        use crate::types::SettingSource;
+        let mut o = base();
+        o.skills = Some(Skills::All);
+        o.setting_sources = Some(vec![SettingSource::Project]);
+        let cmd = build_command("/c", &o);
+        assert!(cmd.iter().any(|a| a == "--setting-sources=project"));
+    }
+
+    #[test]
+    fn agents_never_passed_as_cli_flag() {
+        // Agents are sent via the initialize control request, not a CLI flag.
+        let mut o = base();
+        let mut agents = HashMap::new();
+        agents.insert("helper".to_string(), AgentDefinition::new("A helper", "Be helpful"));
+        o.agents = Some(agents);
+        let cmd = build_command("/c", &o);
+        assert!(!cmd.iter().any(|a| a == "--agents"));
+    }
+
+    // --- Stdout framing (pump_stdout), ported from test_subprocess_buffering.py ---
+
+    async fn pump(data: &'static [u8], max: usize) -> Vec<Result<Value>> {
+        let (tx, mut rx) = mpsc::channel(64);
+        let (_keep, mut shutdown) = oneshot::channel::<()>();
+        pump_stdout(data, &mut shutdown, max, &tx).await;
+        drop(tx);
+        let mut out = Vec::new();
+        while let Some(item) = rx.recv().await {
+            out.push(item);
+        }
+        out
+    }
+
+    fn oks(out: &[Result<Value>]) -> Vec<Value> {
+        out.iter().filter_map(|r| r.as_ref().ok().cloned()).collect()
+    }
+
+    #[tokio::test]
+    async fn framing_multiple_messages_and_blank_lines() {
+        let out = pump(b"{\"n\":1}\n\n{\"n\":2}\n", DEFAULT_MAX_BUFFER_SIZE).await;
+        let vals = oks(&out);
+        assert_eq!(vals.len(), 2);
+        assert_eq!(vals[0]["n"], 1);
+        assert_eq!(vals[1]["n"], 2);
+    }
+
+    #[tokio::test]
+    async fn framing_crlf_and_non_json_skipped() {
+        let out = pump(
+            b"{\"a\":1}\r\n[SandboxDebug] noise\n{\"b\":2}\n",
+            DEFAULT_MAX_BUFFER_SIZE,
+        )
+        .await;
+        assert_eq!(oks(&out).len(), 2); // CRLF trimmed, debug line skipped
+    }
+
+    #[tokio::test]
+    async fn framing_embedded_escaped_newline() {
+        // A literal newline inside a JSON string is escaped on the wire.
+        let out = pump(b"{\"text\":\"a\\nb\"}\n", DEFAULT_MAX_BUFFER_SIZE).await;
+        let vals = oks(&out);
+        assert_eq!(vals.len(), 1);
+        assert_eq!(vals[0]["text"], "a\nb");
+    }
+
+    #[tokio::test]
+    async fn framing_final_line_without_newline_yielded() {
+        let out = pump(b"{\"n\":1}\n{\"n\":2}", DEFAULT_MAX_BUFFER_SIZE).await;
+        assert_eq!(oks(&out).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn framing_truncated_final_line_dropped_not_raised() {
+        // Valid line, then a cut-off final line with no newline: the tail is
+        // dropped (no error surfaced).
+        let out = pump(b"{\"n\":1}\n{\"n\":2", DEFAULT_MAX_BUFFER_SIZE).await;
+        assert_eq!(oks(&out).len(), 1);
+        assert!(out.iter().all(|r| r.is_ok()));
+    }
+
+    #[tokio::test]
+    async fn framing_complete_corrupt_line_raises() {
+        let out = pump(b"{\"n\":1}\n{bad json}\n", DEFAULT_MAX_BUFFER_SIZE).await;
+        assert_eq!(oks(&out).len(), 1);
+        assert!(out.iter().any(|r| matches!(r, Err(Error::JsonDecode { .. }))));
+    }
+
+    #[tokio::test]
+    async fn framing_oversized_line_raises() {
+        // A complete line larger than the (tiny) buffer surfaces a decode error.
+        let out = pump(b"{\"x\":\"aaaaaaaaaaaaaaaaaaaa\"}\n", 8).await;
+        assert!(out.iter().any(|r| matches!(r, Err(Error::JsonDecode { .. }))));
     }
 }

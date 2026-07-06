@@ -333,12 +333,35 @@ mod tests {
 
     #[test]
     fn whole_tool_allowed_cases() {
-        assert_eq!(whole_tool_allowed("Read"), Some("Read"));
-        assert_eq!(whole_tool_allowed("Read()"), Some("Read"));
-        assert_eq!(whole_tool_allowed("Read(*)"), Some("Read"));
-        assert_eq!(whole_tool_allowed("Bash(ls:*)"), None);
-        assert_eq!(whole_tool_allowed(""), None);
-        assert_eq!(whole_tool_allowed("(x)"), None);
+        // Ported from test_option_warnings.py::test_whole_tool_allowed.
+        let cases: &[(&str, Option<&str>)] = &[
+            ("Read", Some("Read")),
+            ("mcp__server__tool", Some("mcp__server__tool")),
+            ("Read(*)", Some("Read")),
+            ("Read()", Some("Read")),
+            ("mcp__server__tool(*)", Some("mcp__server__tool")),
+            ("Bash(ls:*)", None),
+            ("Bash(git log:*)", None),
+            ("Bash(*.py)", None),
+            ("", None),
+            ("   ", None),
+            ("Bash(ls:*", None), // never closes
+            ("Bash(ls)x", None), // trailing after close
+            ("(foo)", None),     // no tool name before the paren
+            ("(*)", None),       // empty tool name guard
+            ("Read(*x", None),   // never closes
+        ];
+        for (entry, expected) in cases {
+            assert_eq!(whole_tool_allowed(entry), *expected, "entry: {entry:?}");
+        }
+    }
+
+    #[test]
+    fn warn_once_dedupes_and_no_panic() {
+        // Emitting is a stderr side effect; assert it doesn't panic and dedupes
+        // (the second call is a no-op — we can only observe it doesn't crash).
+        warn_once("test parity warning message");
+        warn_once("test parity warning message");
     }
 
     #[test]
