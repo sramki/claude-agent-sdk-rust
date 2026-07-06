@@ -154,7 +154,7 @@ pub(crate) async fn setup_query(
     mut options: ClaudeAgentOptions,
     prompt_is_string: bool,
     custom_transport: Option<Box<dyn Transport>>,
-) -> Result<Query> {
+) -> Result<(Query, Option<crate::session_resume::MaterializedResume>)> {
     validate_session_store_options(&options)?;
     if options.can_use_tool.is_some() {
         if prompt_is_string {
@@ -171,7 +171,26 @@ pub(crate) async fn setup_query(
         options.permission_prompt_tool_name = Some("stdio".to_string());
     }
 
-    let config = derive_query_config(&options, true);
+    // resume/continue + session_store: load the session from the store into a
+    // temp CLAUDE_CONFIG_DIR the subprocess resumes from. Skipped for a custom
+    // transport (materialized options never reach a pre-built transport).
+    let materialized = if custom_transport.is_none() {
+        crate::session_resume::materialize_resume_session(&options).await?
+    } else {
+        None
+    };
+    if let Some(m) = &materialized {
+        options = crate::session_resume::apply_materialized_options(options, m);
+    }
+
+    let mut config = derive_query_config(&options, true);
+    if let Some(m) = &materialized {
+        config.mirror_projects_dir = m
+            .config_dir
+            .join("projects")
+            .to_string_lossy()
+            .into_owned();
+    }
 
     let mut transport: Box<dyn Transport> = match custom_transport {
         Some(t) => t,
@@ -182,12 +201,16 @@ pub(crate) async fn setup_query(
     let mut query = Query::new(transport, config);
     query.start();
     query.initialize().await?;
-    Ok(query)
+    Ok((query, materialized))
 }
 
 /// Drives a fully-set-up `Query` to completion, forwarding parsed messages to
 /// `out`, then closes the query. Used by [`query`].
-async fn run_to_completion(mut query: Query, out: mpsc::Sender<Result<Message>>) {
+async fn run_to_completion(
+    mut query: Query,
+    materialized: Option<crate::session_resume::MaterializedResume>,
+    out: mpsc::Sender<Result<Message>>,
+) {
     if let Some(mut rx) = query.take_messages() {
         while let Some(item) = rx.recv().await {
             if !forward(item, &out).await {
@@ -196,6 +219,8 @@ async fn run_to_completion(mut query: Query, out: mpsc::Sender<Result<Message>>)
         }
     }
     let _ = query.close().await;
+    // Drop the materialized temp CLAUDE_CONFIG_DIR after the subprocess exits.
+    drop(materialized);
 }
 
 /// Forwards one raw item as a parsed message. Returns `false` to stop.
@@ -227,7 +252,7 @@ pub async fn query(
 ) -> Result<MessageStream> {
     let prompt = prompt.into();
     let prompt_is_string = matches!(prompt, Prompt::Text(_));
-    let query = setup_query(options, prompt_is_string, None).await?;
+    let (query, materialized) = setup_query(options, prompt_is_string, None).await?;
 
     match prompt {
         Prompt::Text(s) => {
@@ -240,7 +265,7 @@ pub async fn query(
     }
 
     let (tx, rx) = mpsc::channel::<Result<Message>>(100);
-    tokio::spawn(run_to_completion(query, tx));
+    tokio::spawn(run_to_completion(query, materialized, tx));
     Ok(MessageStream {
         inner: ReceiverStream::new(rx),
     })
@@ -254,7 +279,7 @@ pub async fn query_with_transport(
 ) -> Result<MessageStream> {
     let prompt = prompt.into();
     let prompt_is_string = matches!(prompt, Prompt::Text(_));
-    let query = setup_query(options, prompt_is_string, Some(transport)).await?;
+    let (query, materialized) = setup_query(options, prompt_is_string, Some(transport)).await?;
 
     match prompt {
         Prompt::Text(s) => {
@@ -267,7 +292,7 @@ pub async fn query_with_transport(
     }
 
     let (tx, rx) = mpsc::channel::<Result<Message>>(100);
-    tokio::spawn(run_to_completion(query, tx));
+    tokio::spawn(run_to_completion(query, materialized, tx));
     Ok(MessageStream {
         inner: ReceiverStream::new(rx),
     })

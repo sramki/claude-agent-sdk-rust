@@ -61,6 +61,7 @@ mod mutations;
 mod parse;
 mod paths;
 pub mod runtime;
+mod session_resume;
 mod sessions;
 pub mod store;
 mod store_import;

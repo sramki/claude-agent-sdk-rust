@@ -28,6 +28,7 @@ pub struct Client {
     options: Option<ClaudeAgentOptions>,
     custom_transport: Option<Box<dyn Transport>>,
     query: Option<Query>,
+    materialized: Option<crate::session_resume::MaterializedResume>,
 }
 
 impl Client {
@@ -37,6 +38,7 @@ impl Client {
             options: Some(options),
             custom_transport: None,
             query: None,
+            materialized: None,
         }
     }
 
@@ -47,6 +49,7 @@ impl Client {
             options: Some(options),
             custom_transport: Some(transport),
             query: None,
+            materialized: None,
         }
     }
 
@@ -64,7 +67,7 @@ impl Client {
         let prompt_is_string = matches!(prompt, Some(Prompt::Text(_)));
         let custom = self.custom_transport.take();
 
-        let query = setup_query(options, prompt_is_string, custom).await?;
+        let (query, materialized) = setup_query(options, prompt_is_string, custom).await?;
 
         match prompt {
             Some(Prompt::Text(s)) => {
@@ -77,6 +80,7 @@ impl Client {
         }
 
         self.query = Some(query);
+        self.materialized = materialized;
         Ok(())
     }
 
@@ -175,6 +179,8 @@ impl Client {
         if let Some(mut query) = self.query.take() {
             query.close().await?;
         }
+        // Drop the materialized temp CLAUDE_CONFIG_DIR after the subprocess exits.
+        self.materialized = None;
         Ok(())
     }
 }
