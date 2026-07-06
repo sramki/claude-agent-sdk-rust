@@ -4,9 +4,8 @@ A **standalone, open-source Rust port of the official Claude Agent SDK** (Python
 TS `@anthropic-ai/claude-agent-sdk`). It reads local Claude Code session history and (roadmap) drives
 the `claude` runtime. **Zero coupling to any other project** — this is a general community crate.
 
-> This repo was forked into its own session to keep it decoupled from the app that motivated it
-> (a knowledge-graph project called *jaala*). Nothing here should reference that project. jaala is
-> merely a downstream consumer.
+> This repo is intentionally standalone and decoupled from any downstream application that may
+> consume it. Nothing here should reference a specific downstream project.
 
 ## Mission
 
