@@ -125,7 +125,25 @@ fn derive_query_config(options: &ClaudeAgentOptions, is_streaming_mode: bool) ->
         exclude_dynamic_sections,
         skills,
         initialize_timeout: initialize_timeout(),
+        session_store: options.session_store.clone(),
+        session_store_flush: options.session_store_flush,
+        // The subprocess inherits the parent's CLAUDE_CONFIG_DIR, so its mirror
+        // `filePath`s are under the parent's projects dir. (Store-backed resume,
+        // which materializes a temp config dir, overrides this — see bucket A5.)
+        mirror_projects_dir: crate::paths::projects_dir().to_string_lossy().into_owned(),
     }
+}
+
+/// Fails fast on invalid `session_store` option combinations. Mirrors
+/// `validate_session_store_options` (the continue-conversation/list_sessions
+/// check surfaces at first store use instead, via `Error::Unsupported`).
+fn validate_session_store_options(options: &ClaudeAgentOptions) -> Result<()> {
+    if options.session_store.is_some() && options.enable_file_checkpointing {
+        return Err(Error::Invalid(
+            "session_store cannot be combined with enable_file_checkpointing (checkpoints are local-disk only and would diverge from the mirrored transcript)".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Validates permission options, configures `permission_prompt_tool_name`,
@@ -137,6 +155,7 @@ pub(crate) async fn setup_query(
     prompt_is_string: bool,
     custom_transport: Option<Box<dyn Transport>>,
 ) -> Result<Query> {
+    validate_session_store_options(&options)?;
     if options.can_use_tool.is_some() {
         if prompt_is_string {
             return Err(Error::connection(

@@ -44,6 +44,12 @@ pub struct QueryConfig {
     pub skills: Option<Vec<String>>,
     /// Timeout for the `initialize` request.
     pub initialize_timeout: Duration,
+    /// External store to mirror the transcript to (enables the mirror batcher).
+    pub session_store: Option<Arc<dyn crate::types::SessionStore>>,
+    /// When to flush mirrored transcript entries.
+    pub session_store_flush: crate::types::SessionStoreFlushMode,
+    /// Projects directory that mirror `filePath`s are keyed against.
+    pub mirror_projects_dir: String,
 }
 
 impl Default for QueryConfig {
@@ -57,6 +63,9 @@ impl Default for QueryConfig {
             exclude_dynamic_sections: None,
             skills: None,
             initialize_timeout: DEFAULT_INITIALIZE_TIMEOUT,
+            session_store: None,
+            session_store_flush: crate::types::SessionStoreFlushMode::Batched,
+            mirror_projects_dir: String::new(),
         }
     }
 }
@@ -74,6 +83,10 @@ struct Shared {
     first_result: Notify,
     first_result_fired: AtomicBool,
     has_hooks: bool,
+    /// Transcript-mirror batcher (present when a `session_store` is configured).
+    batcher: Option<crate::store_mirror::TranscriptMirrorBatcher>,
+    /// Output sender — shared by the read loop and the mirror `on_error` hook.
+    out_tx: mpsc::Sender<Result<Value>>,
 }
 
 impl Shared {
@@ -173,6 +186,27 @@ impl Query {
             None
         };
 
+        // Create the output channel now so the mirror `on_error` hook can share
+        // its sender with the read loop.
+        let (out_tx, out_rx) = mpsc::channel::<Result<Value>>(100);
+
+        // Build the transcript-mirror batcher when a store is configured.
+        let batcher = config.session_store.map(|store| {
+            let out = out_tx.clone();
+            let on_error: crate::store_mirror::MirrorOnError = Arc::new(move |key, error| {
+                let out = out.clone();
+                Box::pin(async move {
+                    let _ = out.try_send(Ok(mirror_error_message(key, error)));
+                })
+            });
+            crate::store_mirror::TranscriptMirrorBatcher::new(
+                store,
+                config.mirror_projects_dir,
+                config.session_store_flush,
+                on_error,
+            )
+        });
+
         let shared = Arc::new(Shared {
             transport: Mutex::new(transport),
             is_streaming_mode: config.is_streaming_mode,
@@ -184,6 +218,8 @@ impl Query {
             request_counter: AtomicU64::new(0),
             first_result: Notify::new(),
             first_result_fired: AtomicBool::new(false),
+            batcher,
+            out_tx,
         });
 
         Query {
@@ -194,7 +230,7 @@ impl Query {
             skills: config.skills,
             initialize_timeout: config.initialize_timeout,
             read_task: None,
-            msg_rx: None,
+            msg_rx: Some(out_rx),
             initialization_result: None,
             started: false,
         }
@@ -215,9 +251,8 @@ impl Query {
                 .expect("transport not locked");
             t.read_messages()
         };
-        let (out_tx, out_rx) = mpsc::channel::<Result<Value>>(100);
         let shared = self.shared.clone();
-        self.msg_rx = Some(out_rx);
+        let out_tx = self.shared.out_tx.clone();
         self.read_task = Some(tokio::spawn(read_loop(shared, stream, out_tx)));
     }
 
@@ -472,8 +507,12 @@ impl Query {
         .await
     }
 
-    /// Closes the query and its transport.
+    /// Closes the query and its transport. Flushes any pending mirror entries
+    /// first so an early teardown doesn't drop the current turn.
     pub async fn close(&mut self) -> Result<()> {
+        if let Some(batcher) = &self.shared.batcher {
+            batcher.close().await;
+        }
         if let Some(handle) = self.read_task.take() {
             handle.abort();
             let _ = handle.await;
@@ -481,6 +520,23 @@ impl Query {
         let mut t = self.shared.transport.lock().await;
         t.close().await
     }
+}
+
+/// Builds a synthetic `mirror_error` system message. Mirrors
+/// `Query.report_mirror_error`.
+fn mirror_error_message(key: Option<crate::types::SessionKey>, error: String) -> Value {
+    let session_id = key.as_ref().map(|k| k.session_id.clone()).unwrap_or_default();
+    let key_val = key
+        .and_then(|k| serde_json::to_value(k).ok())
+        .unwrap_or(Value::Null);
+    json!({
+        "type": "system",
+        "subtype": "mirror_error",
+        "error": error,
+        "key": key_val,
+        "uuid": uuid::Uuid::new_v4().to_string(),
+        "session_id": session_id,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -537,9 +593,27 @@ async fn read_loop(
                 // handlers are cheap and the CLI abandons the request anyway.
             }
             Some("transcript_mirror") => {
-                // SessionStore mirroring is handled at a higher layer; drop here.
+                // Peel the mirror frame off stdout and hand it to the batcher;
+                // it is not forwarded to consumers.
+                if let Some(batcher) = &shared.batcher {
+                    if let (Some(file_path), Some(entries)) = (
+                        message.get("filePath").and_then(Value::as_str),
+                        message.get("entries").and_then(Value::as_array),
+                    ) {
+                        let entries: Vec<_> = entries
+                            .iter()
+                            .filter_map(|e| e.as_object().cloned())
+                            .collect();
+                        batcher.enqueue(file_path.to_string(), entries);
+                    }
+                }
             }
             Some("result") => {
+                // Flush pending mirror entries before yielding the result so a
+                // consumer observing it can rely on the store being current.
+                if let Some(batcher) = &shared.batcher {
+                    batcher.flush().await;
+                }
                 shared.fire_first_result();
                 if message.get("is_error").and_then(Value::as_bool) == Some(true) {
                     let errors: Vec<String> = message
