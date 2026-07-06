@@ -14,7 +14,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use claude_agent_sdk_rs::runtime::transport::MessageStream;
 use claude_agent_sdk_rs::types::{
     ContentBlock, HookEvent, HookJSONOutput, HookMatcher, McpServers, Message, PermissionMode,
-    PermissionResult, PermissionResultAllow, SyncHookOutput, UserContent,
+    PermissionResult, PermissionResultAllow, PermissionResultDeny, SyncHookOutput, UserContent,
 };
 use claude_agent_sdk_rs::{
     create_sdk_mcp_server, query_with_transport, tool, ClaudeAgentOptions, Client, Prompt, Result,
@@ -428,5 +428,106 @@ async fn control_methods_send_and_resolve() {
         assert!(w.iter().any(|m| m["request"]["subtype"] == "set_permission_mode"));
         assert!(w.iter().any(|m| m["request"]["subtype"] == "stop_task"));
     }
+    client.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn can_use_tool_deny_dispatch() {
+    let (transport, written, inject) = ControlMock::new();
+    let can_use_tool: claude_agent_sdk_rs::types::CanUseTool = Arc::new(|_n, _i, _c| {
+        Box::pin(async move {
+            Ok(PermissionResult::Deny(PermissionResultDeny {
+                message: "nope".to_string(),
+                interrupt: true,
+            }))
+        })
+    });
+    let options = ClaudeAgentOptions {
+        can_use_tool: Some(can_use_tool),
+        ..Default::default()
+    };
+    let mut client = Client::with_transport(options, Box::new(transport));
+    client.connect(None).await.expect("connect");
+
+    inject
+        .send(Ok(json!({
+            "type": "control_request", "request_id": "deny1",
+            "request": {"subtype": "can_use_tool", "tool_name": "Bash",
+                        "input": {"command": "rm -rf /"}, "tool_use_id": "tu9"},
+        })))
+        .await
+        .unwrap();
+
+    let resp = wait_written(&written, |v| is_response_for(v, "deny1").is_some()).await;
+    let inner = is_response_for(&resp, "deny1").unwrap();
+    assert_eq!(inner["response"]["behavior"], "deny");
+    assert_eq!(inner["response"]["message"], "nope");
+    assert_eq!(inner["response"]["interrupt"], true);
+    client.disconnect().await.unwrap();
+}
+
+/// A mock that answers `initialize` with success but every other SDK control
+/// request with an error, to exercise the error-response routing path.
+struct ErrorControlMock {
+    tx: mpsc::Sender<Result<Value>>,
+    rx: Option<mpsc::Receiver<Result<Value>>>,
+    ready: bool,
+}
+
+#[async_trait]
+impl Transport for ErrorControlMock {
+    async fn connect(&mut self) -> Result<()> {
+        self.ready = true;
+        Ok(())
+    }
+    async fn write(&mut self, data: &str) -> Result<()> {
+        let v: Value = serde_json::from_str(data.trim()).expect("json");
+        if v.get("type").and_then(Value::as_str) == Some("control_request") {
+            let rid = v.get("request_id").and_then(Value::as_str).unwrap_or("");
+            let subtype = v["request"]["subtype"].as_str().unwrap_or("");
+            let resp = if subtype == "initialize" {
+                json!({"type": "control_response", "response": {"subtype": "success", "request_id": rid, "response": {}}})
+            } else {
+                json!({"type": "control_response", "response": {"subtype": "error", "request_id": rid, "error": "boom"}})
+            };
+            let _ = self.tx.send(Ok(resp)).await;
+        }
+        Ok(())
+    }
+    async fn end_input(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn read_messages(&mut self) -> MessageStream {
+        match self.rx.take() {
+            Some(rx) => Box::pin(ReceiverStream::new(rx)),
+            None => Box::pin(tokio_stream::empty()),
+        }
+    }
+    async fn close(&mut self) -> Result<()> {
+        self.ready = false;
+        Ok(())
+    }
+    fn is_ready(&self) -> bool {
+        self.ready
+    }
+}
+
+#[tokio::test]
+async fn control_error_response_surfaces_error() {
+    let (tx, rx) = mpsc::channel(16);
+    let transport = ErrorControlMock {
+        tx,
+        rx: Some(rx),
+        ready: false,
+    };
+    let mut client = Client::with_transport(ClaudeAgentOptions::default(), Box::new(transport));
+    client.connect(None).await.expect("connect"); // initialize succeeds
+
+    // A control op the CLI answers with an error must surface as Err.
+    let err = client.interrupt().await.expect_err("interrupt should error");
+    assert!(
+        matches!(err, claude_agent_sdk_rs::Error::Connection(ref m) if m == "boom"),
+        "unexpected error: {err:?}"
+    );
     client.disconnect().await.unwrap();
 }
