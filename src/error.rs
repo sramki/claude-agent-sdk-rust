@@ -78,6 +78,15 @@ pub enum Error {
     #[error("unsupported operation: {0}")]
     Unsupported(&'static str),
 
+    /// Invalid input to a session operation (e.g. an empty title, or a
+    /// message id not present in a transcript). Mirrors upstream `ValueError`.
+    #[error("{0}")]
+    Invalid(String),
+
+    /// A session file could not be found. Mirrors upstream `FileNotFoundError`.
+    #[error("{0}")]
+    SessionNotFound(String),
+
     /// An underlying I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),

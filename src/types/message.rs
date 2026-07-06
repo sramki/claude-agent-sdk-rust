@@ -429,6 +429,11 @@ pub struct RateLimitEvent {
 /// A message emitted by the runtime. Mirrors the Python `Message` union
 /// (`UserMessage | AssistantMessage | SystemMessage | ResultMessage |
 /// StreamEvent | RateLimitEvent`).
+///
+/// Variants differ in size (a `ResultMessage` carries several optional maps);
+/// this is a user-facing output enum matched by value, so the variants are
+/// intentionally unboxed for ergonomics.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Message {
     /// A user message.
