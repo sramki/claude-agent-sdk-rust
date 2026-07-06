@@ -1,34 +1,37 @@
-//! # claude-agent-sdk (Rust)
+//! # claude-agent-sdk-rs
 //!
-//! Read local **Claude Code** session history from
-//! `~/.claude/projects/**/*.jsonl`. This crate is a faithful Rust port of the
-//! *session-reading* functionality of Anthropic's
-//! [`claude-agent-sdk`](https://github.com/anthropics/claude-agent-sdk-python)
-//! for Python (the filesystem path in `_internal/sessions.py`). It does **not**
-//! port the live-streaming `query()` client or the async `SessionStore`
-//! backend — reading local transcript files is the entire scope.
+//! An idiomatic Rust port of Anthropic's
+//! [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python)
+//! for Python (pinned to v0.2.110). Read local **Claude Code** session history
+//! *and* drive the live `claude` runtime over the stream-json protocol.
+//!
+//! `Result`-based, serde-typed, `tokio`-async; callbacks are `Arc`-wrapped
+//! closures. The library is imported as `claude_agent_sdk_rs`.
 //!
 //! ## What it does
 //!
-//! - [`list_sessions`] — enumerate sessions (metadata from `stat` + head/tail
-//!   reads, no full parse), sorted newest-first, with pagination.
-//! - [`get_session_info`] — metadata for one session by UUID.
-//! - [`get_session_messages`] — the reconstructed user/assistant conversation,
-//!   in chronological order (the transcript DAG is walked via `parentUuid`
-//!   links and collapsed to a single most-recent branch).
-//! - [`list_subagents`] / [`get_subagent_messages`] — subagent transcripts
-//!   stored under `<session>/subagents/`.
+//! **Live runtime** — [`query`] (one-shot / unidirectional streaming) and
+//! [`Client`] (bidirectional, interactive) drive the `claude` CLI over the
+//! stream-json control protocol, with hooks, permission callbacks
+//! ([`CanUseTool`]), and in-process MCP tool servers
+//! ([`create_sdk_mcp_server`] / [`tool`]).
 //!
-//! Config home is `$CLAUDE_CONFIG_DIR` (if set) else `~/.claude`. Reads degrade
-//! gracefully — a missing directory, unreadable file, or malformed line yields
-//! an empty result (`Ok`), not an error. The [`Error`] path is reserved for
-//! caller mistakes such as a malformed session id.
+//! **Session reader** (filesystem, no CLI) — [`list_sessions`],
+//! [`get_session_info`], [`get_session_messages`], [`list_subagents`] /
+//! [`get_subagent_messages`].
+//!
+//! **Session write ops** — [`rename_session`], [`tag_session`],
+//! [`delete_session`], [`fork_session`], and the [`InMemorySessionStore`].
+//!
+//! Reads degrade gracefully — a missing directory, unreadable file, or
+//! malformed line yields `Ok` (empty), not an error. The [`Error`] path is
+//! reserved for caller mistakes such as a malformed session id.
 //!
 //! ## Example
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use claude_agent_sdk::{list_sessions, get_session_messages, MessageType};
+//! use claude_agent_sdk_rs::{list_sessions, get_session_messages, MessageType};
 //!
 //! // Newest 20 sessions for a project (scanning git worktrees too).
 //! let dir = Path::new("/path/to/project");
@@ -44,7 +47,7 @@
 //!     };
 //!     println!("[{who}] {}", msg.message);
 //! }
-//! # Ok::<(), claude_agent_sdk::Error>(())
+//! # Ok::<(), claude_agent_sdk_rs::Error>(())
 //! ```
 //!
 //! ## License

@@ -1,15 +1,14 @@
-claude-agent-sdk (Rust)
+claude-agent-sdk-rs
 
-This crate is a Rust port of the session-reading functionality of Anthropic's
-`claude-agent-sdk` for Python:
+This crate is an idiomatic Rust port of Anthropic's Claude Agent SDK for Python:
 
     https://github.com/anthropics/claude-agent-sdk-python
 
-Specifically, it ports the filesystem session-reading logic found in
-`src/claude_agent_sdk/_internal/sessions.py` and the accompanying test suite in
-`tests/test_sessions.py`. The live-streaming client (`query()`, subprocess
-transport) and the async `SessionStore` backend are intentionally NOT ported —
-this crate reads local `~/.claude/projects/**/*.jsonl` history only.
+It ports the session reader, the live runtime (the `query()` / streaming client
+over the stream-json control protocol, hooks, permission callbacks, and
+in-process MCP servers), and local session write ops, along with the SDK's test
+suite. The deeper SessionStore-backed integration (store-backed listing,
+mirrored resume/import, the transcript-mirror batcher) is not yet ported.
 
 The original Python source is licensed under the MIT License,
 Copyright (c) 2025 Anthropic, PBC. This port preserves that license (see

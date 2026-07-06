@@ -3,7 +3,7 @@
 //! ISO-timestamp parsing.
 //!
 //! Ported from the extraction + lite-read helpers in the Python
-//! `claude_agent_sdk/_internal/sessions.py`.
+//! `_internal/sessions.py`.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};

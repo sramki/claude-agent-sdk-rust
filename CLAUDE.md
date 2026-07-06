@@ -1,8 +1,9 @@
-# claude-agent-sdk-rust — project context
+# claude-agent-sdk-rs — project context
 
-A **standalone, open-source Rust port of the official Claude Agent SDK** (Python `claude-agent-sdk` /
-TS `@anthropic-ai/claude-agent-sdk`). It reads local Claude Code session history and (roadmap) drives
-the `claude` runtime. **Zero coupling to any other project** — this is a general community crate.
+A **standalone, open-source Rust port of Anthropic's official Claude Agent SDK** (Python and
+TypeScript). Published on crates.io as `claude-agent-sdk-rs`, imported as `claude_agent_sdk_rs`. It
+reads local Claude Code session history and drives the `claude` runtime. **Zero coupling to any other
+project** — this is a general community crate.
 
 > This repo is intentionally standalone and decoupled from any downstream application that may
 > consume it. Nothing here should reference a specific downstream project.
@@ -17,7 +18,7 @@ load-bearing:
 
 ## Current state (2026-07-06)
 
-Faithful to **`claude-agent-sdk` Python v0.2.110**. Idiomatic Rust (`Result`, serde enums, tokio async,
+Faithful to **Anthropic's Python SDK v0.2.110**. Idiomatic Rust (`Result`, serde enums, tokio async,
 `Arc`-wrapped callbacks). **177 tests** (97 unit + 80 integration/runtime/mutations + 2 doctests),
 `cargo clippy -D warnings` clean. **MIT**; on GitHub at `sramki/claude-agent-sdk-rust` (branch
 `feat/full-parity`).
@@ -46,7 +47,7 @@ Faithful to **`claude-agent-sdk` Python v0.2.110**. Idiomatic Rust (`Result`, se
 
 ## Reference
 
-- Upstream: `anthropics/claude-agent-sdk-python` (readable; the reference impl) + `@anthropic-ai/claude-agent-sdk` (TS, minified).
+- Upstream: `anthropics/claude-agent-sdk-python` (readable; the reference impl) + the TypeScript SDK (minified).
 - Docs: https://code.claude.com/docs/en/agent-sdk/sessions · https://code.claude.com/docs/en/agent-sdk/python
 - Local Python source snapshot used for the reader port: `_internal/sessions.py` from v0.2.110.
 

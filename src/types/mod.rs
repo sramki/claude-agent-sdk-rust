@@ -1,8 +1,8 @@
 //! Core SDK types.
 //!
-//! A faithful, idiomatic Rust port of the Python `claude_agent_sdk/types.py`.
+//! A faithful, idiomatic Rust port of the Python SDK (`types.py`).
 //! Organized into submodules by concern; everything is re-exported from this
-//! module root so callers can `use claude_agent_sdk::types::*` (or the crate
+//! module root so callers can `use claude_agent_sdk_rs::types::*` (or the crate
 //! root re-exports).
 
 use std::future::Future;

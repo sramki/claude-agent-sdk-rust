@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use claude_agent_sdk::{
+use claude_agent_sdk_rs::{
     create_sdk_mcp_server, query, tool, ClaudeAgentOptions, Client, McpServers, Message,
     PermissionMode, ToolsConfig,
 };
@@ -133,7 +133,7 @@ async fn live_client_interactive() {
 }
 
 /// Drains a client message stream until a `ResultMessage`, returning it.
-async fn drain_to_result(stream: &mut claude_agent_sdk::MessageStream) -> claude_agent_sdk::types::ResultMessage {
+async fn drain_to_result(stream: &mut claude_agent_sdk_rs::MessageStream) -> claude_agent_sdk_rs::types::ResultMessage {
     while let Some(item) = stream.next().await {
         if let Message::Result(r) = item.expect("no stream error") {
             return r;

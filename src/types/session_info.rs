@@ -1,7 +1,7 @@
 //! Public data types returned by the session-reading API.
 //!
 //! These mirror the `SDKSessionInfo` and `SessionMessage` dataclasses from the
-//! Python `claude-agent-sdk` (`types.py`), with idiomatic Rust field types.
+//! Python SDK's `types.py`, with idiomatic Rust field types.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

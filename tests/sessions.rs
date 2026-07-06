@@ -13,7 +13,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use serde_json::{json, Map, Value};
 
-use claude_agent_sdk::{
+use claude_agent_sdk_rs::{
     get_session_info, get_session_messages, get_subagent_messages, list_sessions, list_subagents,
     MessageType,
 };
@@ -190,7 +190,7 @@ fn write_transcript(project_dir: &Path, sid: &str, entries: &[Value]) -> PathBuf
     path
 }
 
-fn ids(msgs: &[claude_agent_sdk::SessionMessage]) -> Vec<String> {
+fn ids(msgs: &[claude_agent_sdk_rs::SessionMessage]) -> Vec<String> {
     msgs.iter().map(|m| m.uuid.clone()).collect()
 }
 

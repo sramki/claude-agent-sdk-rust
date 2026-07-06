@@ -1,7 +1,7 @@
 //! The public session-reading API and its directory-scanning internals.
 //!
 //! Ported from the filesystem functions in the Python
-//! `claude_agent_sdk/_internal/sessions.py`.
+//! `_internal/sessions.py`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -361,11 +361,11 @@ fn collect_agent_files(base_dir: &Path) -> Vec<(String, PathBuf)> {
 /// # Example
 /// ```no_run
 /// use std::path::Path;
-/// let sessions = claude_agent_sdk::list_sessions(Some(Path::new("/path/to/project")), None, 0, true)?;
+/// let sessions = claude_agent_sdk_rs::list_sessions(Some(Path::new("/path/to/project")), None, 0, true)?;
 /// for s in sessions {
 ///     println!("{}: {}", s.session_id, s.summary);
 /// }
-/// # Ok::<(), claude_agent_sdk::Error>(())
+/// # Ok::<(), claude_agent_sdk_rs::Error>(())
 /// ```
 pub fn list_sessions(
     directory: Option<&Path>,

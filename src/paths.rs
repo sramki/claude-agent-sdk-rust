@@ -2,7 +2,7 @@
 //! `simple_hash`, UUID validation, and git-worktree discovery.
 //!
 //! Ported from the path-handling helpers in the Python
-//! `claude_agent_sdk/_internal/sessions.py`.
+//! `_internal/sessions.py`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -1,7 +1,7 @@
 //! Transcript-entry parsing and conversation-chain reconstruction.
 //!
 //! Ported from the transcript helpers in the Python
-//! `claude_agent_sdk/_internal/sessions.py`: `_parse_transcript_entries`,
+//! `_internal/sessions.py`: `_parse_transcript_entries`,
 //! `_build_conversation_chain`, `_build_subagent_chain`, `_is_visible_message`,
 //! and `_to_session_message`.
 

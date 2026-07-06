@@ -1,14 +1,17 @@
 [package]
-name = "claude-agent-sdk"
+name = "claude-agent-sdk-rs"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
-description = "A faithful Rust port of Anthropic's claude-agent-sdk (Python): read local Claude Code session history and drive the `claude` runtime over stream-json."
+rust-version = "1.83"
+description = "An idiomatic, unofficial Rust port of Anthropic's Claude Agent SDK (Python): read local Claude Code session history and drive the `claude` runtime over stream-json."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/sramki/claude-agent-sdk-rust"
+documentation = "https://docs.rs/claude-agent-sdk-rs"
 keywords = ["claude", "agent", "sdk", "jsonl", "sessions"]
 categories = ["api-bindings", "parsing", "filesystem"]
+# Dev-only project context; not useful to downstream consumers.
+exclude = ["CLAUDE.md"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

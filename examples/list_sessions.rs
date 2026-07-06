@@ -6,9 +6,9 @@
 
 use std::path::Path;
 
-use claude_agent_sdk::list_sessions;
+use claude_agent_sdk_rs::list_sessions;
 
-fn main() -> Result<(), claude_agent_sdk::Error> {
+fn main() -> Result<(), claude_agent_sdk_rs::Error> {
     let arg = std::env::args().nth(1);
     let dir = arg.as_deref().map(Path::new);
 

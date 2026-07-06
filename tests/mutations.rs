@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use claude_agent_sdk::{
+use claude_agent_sdk_rs::{
     delete_session, fork_session, get_session_info, list_sessions, rename_session, tag_session,
 };
 
@@ -100,7 +100,7 @@ fn rename_rejects_missing_session() {
     let _c = claude_config_dir();
     let sid = new_uuid(0x2002);
     let err = rename_session(&sid, "x", None).unwrap_err();
-    assert!(matches!(err, claude_agent_sdk::Error::SessionNotFound(_)));
+    assert!(matches!(err, claude_agent_sdk_rs::Error::SessionNotFound(_)));
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn fork_up_to_message_truncates() {
 
     // Fork only up to the first assistant turn: the fork has 2 conversation msgs.
     let result = fork_session(&sid, Some(&project), Some(&a1), None).unwrap();
-    let msgs = claude_agent_sdk::get_session_messages(&result.session_id, Some(&project), None, 0)
+    let msgs = claude_agent_sdk_rs::get_session_messages(&result.session_id, Some(&project), None, 0)
         .unwrap();
     assert_eq!(msgs.len(), 2);
     // Fresh UUIDs — not the originals.
@@ -200,12 +200,12 @@ fn fork_unknown_message_id_errors() {
 
     let missing = new_uuid(0xDEAD);
     let err = fork_session(&sid, Some(&project), Some(&missing), None).unwrap_err();
-    assert!(matches!(err, claude_agent_sdk::Error::Invalid(_)));
+    assert!(matches!(err, claude_agent_sdk_rs::Error::Invalid(_)));
 
     // A malformed up_to_message_id is rejected up front.
     assert!(matches!(
         fork_session(&sid, Some(&project), Some("not-a-uuid"), None),
-        Err(claude_agent_sdk::Error::Invalid(_))
+        Err(claude_agent_sdk_rs::Error::Invalid(_))
     ));
 }
 
@@ -215,6 +215,6 @@ fn delete_rejects_invalid_uuid() {
     let _c = claude_config_dir();
     assert!(matches!(
         delete_session("nope", None),
-        Err(claude_agent_sdk::Error::InvalidSessionId(_))
+        Err(claude_agent_sdk_rs::Error::InvalidSessionId(_))
     ));
 }

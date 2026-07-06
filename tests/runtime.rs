@@ -11,12 +11,12 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use claude_agent_sdk::runtime::transport::MessageStream;
-use claude_agent_sdk::types::{
+use claude_agent_sdk_rs::runtime::transport::MessageStream;
+use claude_agent_sdk_rs::types::{
     ContentBlock, HookEvent, HookJSONOutput, HookMatcher, McpServers, Message, PermissionMode,
     PermissionResult, PermissionResultAllow, SyncHookOutput, UserContent,
 };
-use claude_agent_sdk::{
+use claude_agent_sdk_rs::{
     create_sdk_mcp_server, query_with_transport, tool, ClaudeAgentOptions, Client, Prompt, Result,
     Transport,
 };
@@ -301,7 +301,7 @@ fn is_response_for<'a>(v: &'a Value, rid: &str) -> Option<&'a Value> {
 #[tokio::test]
 async fn can_use_tool_callback_dispatch() {
     let (transport, written, inject) = ControlMock::new();
-    let can_use_tool: claude_agent_sdk::types::CanUseTool = Arc::new(|_name, _input, _ctx| {
+    let can_use_tool: claude_agent_sdk_rs::types::CanUseTool = Arc::new(|_name, _input, _ctx| {
         Box::pin(async move {
             Ok(PermissionResult::Allow(PermissionResultAllow {
                 updated_input: Some(json!({"command": "ls -la"}).as_object().unwrap().clone()),
@@ -337,7 +337,7 @@ async fn can_use_tool_callback_dispatch() {
 #[tokio::test]
 async fn hook_callback_dispatch() {
     let (transport, written, inject) = ControlMock::new();
-    let cb: claude_agent_sdk::types::HookCallback = Arc::new(|_input, _tuid, _ctx| {
+    let cb: claude_agent_sdk_rs::types::HookCallback = Arc::new(|_input, _tuid, _ctx| {
         Box::pin(async move {
             Ok(HookJSONOutput::Sync(SyncHookOutput {
                 continue_: Some(true),

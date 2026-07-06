@@ -1,11 +1,33 @@
-# claude-agent-sdk (Rust)
+# claude-agent-sdk-rs
 
 An idiomatic Rust port of Anthropic's
-[`claude-agent-sdk`](https://github.com/anthropics/claude-agent-sdk-python)
+[Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python)
 for Python (pinned to **v0.2.110**). Read local **Claude Code** session history
 *and* drive the live `claude` runtime over the stream-json protocol.
 
 `Result`-based, serde-typed, `tokio`-async; callbacks are `Arc`-wrapped closures.
+
+## Install
+
+The crate is published as **`claude-agent-sdk-rs`** and imported as
+**`claude_agent_sdk_rs`**:
+
+```toml
+[dependencies]
+claude-agent-sdk-rs = "0.1"
+```
+
+Or straight from git (no crates.io needed):
+
+```toml
+claude-agent-sdk-rs = { git = "https://github.com/sramki/claude-agent-sdk-rust" }
+```
+
+```rust
+use claude_agent_sdk_rs::query;
+```
+
+MSRV: Rust 1.83.
 
 ## What it does
 
@@ -48,9 +70,9 @@ UUID, an empty title) is an `Err`.
 Drive a live query (requires the `claude` CLI on `PATH`):
 
 ```rust
-use claude_agent_sdk::{query, ClaudeAgentOptions, Message};
+use claude_agent_sdk_rs::{query, ClaudeAgentOptions, Message};
 
-# async fn run() -> claude_agent_sdk::Result<()> {
+# async fn run() -> claude_agent_sdk_rs::Result<()> {
 let mut stream = query("What is 2 + 2?", ClaudeAgentOptions::default()).await?;
 while let Some(msg) = stream.next().await {
     if let Message::Result(r) = msg? {
@@ -64,9 +86,9 @@ Read local session history (filesystem only, no CLI):
 
 ```rust
 use std::path::Path;
-use claude_agent_sdk::{list_sessions, get_session_messages, MessageType};
+use claude_agent_sdk_rs::{list_sessions, get_session_messages, MessageType};
 
-# fn run() -> claude_agent_sdk::Result<()> {
+# fn run() -> claude_agent_sdk_rs::Result<()> {
 let dir = Path::new("/path/to/project");
 for info in list_sessions(Some(dir), Some(20), 0, true)? {
     println!("{}  {}", info.session_id, info.summary);
@@ -98,7 +120,7 @@ batcher) is **not** yet ported — see `CLAUDE.md`.
 
 ## Attribution & license
 
-This is an independent, unofficial Rust port of Anthropic's `claude-agent-sdk`
+This is an independent, unofficial Rust port of Anthropic's Claude Agent SDK
 (Python), including a Rust port of that project's tests. The original is
 MIT-licensed (Copyright © 2025 Anthropic, PBC); this port preserves that license.
 See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Not affiliated with or endorsed

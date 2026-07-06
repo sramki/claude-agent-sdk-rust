@@ -3,7 +3,7 @@
 //! run everywhere and exercise the real error mapping in
 //! `SubprocessCliTransport::connect`.
 
-use claude_agent_sdk::{ClaudeAgentOptions, Error, SubprocessCliTransport, Transport};
+use claude_agent_sdk_rs::{ClaudeAgentOptions, Error, SubprocessCliTransport, Transport};
 
 #[tokio::test]
 async fn connect_reports_cli_not_found() {
