@@ -15,35 +15,34 @@ load-bearing:
    format + stream-json protocol). Port the upstream *tests* too; they are the contract.
 2. **In sync** — pinned to a declared upstream version; re-ported on upstream releases.
 
-## Current state (2026-07-05)
+## Current state (2026-07-06)
 
-- **Session reader: DONE.** `list_sessions`, `get_session_info`, `get_session_messages`,
-  `list_subagents`, `get_subagent_messages` — filesystem path, sync, non-panicking.
-- Faithful to **`claude-agent-sdk` Python v0.2.110** (`_internal/sessions.py`). Reproduces: path
-  resolution (djb2/base36 long-path hash, NFC, git-worktree merge+dedup), 64 KiB lite head/tail scan,
-  type-allow-list + skip-malformed parse, DAG→single-most-recent-branch chain build (no
-  `logicalParentUuid`, keep `isCompactSummary`), subagent-file recursion.
-- **108 tests** (35 unit + 71 integration + 2 doctests), `cargo clippy -D warnings` clean. Ported from
-  upstream `tests/test_sessions.py` (store-backed suite deliberately skipped).
-- **MIT** (matches upstream; `NOTICE` documents the port + non-affiliation). Committed `45b7f77`, no remote.
-- Modules: `paths` · `parse` · `chain` · `sessions` · `types` · `lib`.
+Faithful to **`claude-agent-sdk` Python v0.2.110**. Idiomatic Rust (`Result`, serde enums, tokio async,
+`Arc`-wrapped callbacks). **177 tests** (97 unit + 80 integration/runtime/mutations + 2 doctests),
+`cargo clippy -D warnings` clean. **MIT**; on GitHub at `sramki/claude-agent-sdk-rust` (branch
+`feat/full-parity`).
 
-## Direction: **core-parity**, grown as needed (NOT full-parity on day one)
+**DONE:**
+- **Session reader** (`sessions`) — refactored to `Result` (invalid input → `Err`; missing → `Ok`).
+- **Error type** (`error`) — `thiserror` enum mirroring `_errors.py`.
+- **Core types** (`types/`) — content blocks, messages (incl. typed system-message kinds, rate-limit,
+  result, stream events), permission types (`to_wire`/`from_wire`), hooks, MCP configs+status,
+  sandbox, config sub-types, session-store types + `SessionStore` trait, `ClaudeAgentOptions`.
+- **Runtime** (`runtime/`) — message parser, subprocess-CLI transport (tokio), control-protocol
+  `Query` (hooks + permission + SDK-MCP callback dispatch, initialize handshake, all control ops),
+  public `query()` + streaming `Client`. Mock-transport integration tests.
+- **MCP SDK servers** (`mcp`) — `create_sdk_mcp_server`, `tool`, `SdkMcpTool`, `ToolAnnotations`.
+- **Session mutations** (`mutations`) — local `rename`/`tag`/`delete`/`fork` + `project_key_for_directory`.
+- **SessionStore core** (`store`) — `InMemorySessionStore`, `fold_session_summary`,
+  `summary_entry_to_sdk_info`, `file_path_to_session_key`.
 
-| Include (useful core) | Defer until demanded |
-|---|---|
-| session reader ✅ | MCP server config |
-| **runtime: `query()` + streaming client over `claude -p --output-format stream-json`** ← NEXT | hooks / permission callbacks |
-| core message / content-block / tool types + `Options` | `SessionStore` async backends |
-| ported upstream tests as the sync guard | session write ops (fork / edit / import) |
-
-## Next task — the runtime (the SDK's core)
-
-Port the **live query path**: spawn `claude -p --output-format stream-json`, frame/parse the stream-json
-protocol, expose a one-shot `query()` and a streaming client, plus the core `types.py` surface
-(message/content-block/tool-use/tool-result types, `ClaudeAgentOptions`/`Options`). Port the upstream
-runtime tests. Same bar: `cargo build` + `cargo test` + `cargo clippy -D warnings` green; faithful to a
-declared upstream version; commit-first.
+**Remaining (deepest store↔runtime integration; the upstream `defer until demanded` set):**
+- Store-backed async listing variants (`list_sessions_from_store`, `get_session_*_from_store`, …).
+- `import_session_to_store`; session-resume materialization (`materialize_resume_session`,
+  `apply_materialized_options`); `validate_session_store_options`.
+- Transcript-mirror batcher + runtime wiring (the `Query` read loop currently drops
+  `transcript_mirror` frames; `--session-mirror` flag is emitted).
+- `*_via_store` mutation variants.
 
 ## Reference
 
@@ -53,8 +52,9 @@ declared upstream version; commit-first.
 
 ## Conventions
 
-- Faithful port; cite upstream in code comments where logic is non-obvious. Minimal deps.
-- Return types mirror upstream contracts (reader returns `Vec`/`Option`, empty/`None` on error paths —
-  upstream tests assert exactly that; internals never panic on IO).
+- Faithful port in **idiomatic Rust** (`Result`-based, serde enums, tokio async). Cite upstream in code
+  comments where logic is non-obvious. Minimal deps.
+- The public API is `Result`-based: invalid *input* (bad UUID, empty title) → `Err`; a missing session
+  or file degrades gracefully to `Ok(None)`/`Ok(vec![])` (the reader's documented best-effort contract).
 - Every change: build + test + clippy green, then commit with a conventional message. Bump the declared
   upstream-version marker (README/NOTICE) whenever re-syncing.
