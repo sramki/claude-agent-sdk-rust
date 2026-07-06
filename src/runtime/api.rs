@@ -293,8 +293,8 @@ pub(crate) fn warn_if_can_use_tool_shadowed(options: &ClaudeAgentOptions) {
     }
 
     if options.permission_mode == Some(PermissionMode::BypassPermissions) {
-        eprintln!(
-            "warning: can_use_tool will not be invoked: permission_mode 'bypassPermissions' auto-approves every tool call before the callback is consulted. Use a PreToolUse hook to gate every tool call."
+        warn_once(
+            "can_use_tool will not be invoked: permission_mode 'bypassPermissions' auto-approves every tool call before the callback is consulted. Use a PreToolUse hook to gate every tool call.",
         );
         return;
     }
@@ -308,10 +308,22 @@ pub(crate) fn warn_if_can_use_tool_shadowed(options: &ClaudeAgentOptions) {
         }
     }
     if !shadowed.is_empty() {
-        eprintln!(
-            "warning: can_use_tool will not be invoked for: {}. An allowed_tools entry that allows a whole tool auto-approves it before the callback is consulted.",
+        warn_once(&format!(
+            "can_use_tool will not be invoked for: {}. An allowed_tools entry that allows a whole tool auto-approves it before the callback is consulted.",
             shadowed.join(", ")
-        );
+        ));
+    }
+}
+
+/// Emits a warning to stderr at most once per process per distinct message,
+/// mirroring Python's default `warnings` once-per-message behavior.
+fn warn_once(message: &str) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    if seen.lock().unwrap().insert(message.to_string()) {
+        eprintln!("warning: {message}");
     }
 }
 

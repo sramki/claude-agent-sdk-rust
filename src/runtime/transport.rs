@@ -32,6 +32,54 @@ const MINIMUM_CLAUDE_CODE_VERSION: (u32, u32, u32) = (2, 0, 0);
 /// The version reported to the CLI via `CLAUDE_AGENT_SDK_VERSION`.
 const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Tracks live CLI child PIDs so an `atexit` sweep can SIGTERM them if the host
+/// process exits without `close()`. Mirrors the upstream `_ACTIVE_CHILDREN` +
+/// `atexit` reaper (tokio's `kill_on_drop` covers normal `Drop`, but not
+/// `process::exit` / `panic = "abort"`, which this backstops on unix).
+#[cfg(unix)]
+mod reaper {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+
+    static ACTIVE: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+
+    fn registry() -> &'static Mutex<HashSet<u32>> {
+        ACTIVE.get_or_init(|| {
+            // Register the reaper the first time we track a child.
+            unsafe { libc::atexit(reap_all) };
+            Mutex::new(HashSet::new())
+        })
+    }
+
+    pub fn register(pid: u32) {
+        registry().lock().unwrap().insert(pid);
+    }
+
+    pub fn unregister(pid: u32) {
+        if let Some(m) = ACTIVE.get() {
+            if let Ok(mut set) = m.lock() {
+                set.remove(&pid);
+            }
+        }
+    }
+
+    extern "C" fn reap_all() {
+        if let Some(m) = ACTIVE.get() {
+            if let Ok(set) = m.lock() {
+                for &pid in set.iter() {
+                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod reaper {
+    pub fn register(_pid: u32) {}
+    pub fn unregister(_pid: u32) {}
+}
+
 /// A stream of raw CLI messages.
 pub type MessageStream = Pin<Box<dyn Stream<Item = Result<Value>> + Send>>;
 
@@ -549,6 +597,13 @@ impl Transport for SubprocessCliTransport {
         if let Some(cwd) = &self.cwd {
             command.current_dir(cwd);
         }
+        // Run the subprocess as a specific OS user (unix, numeric uid only —
+        // username resolution would need a passwd lookup). Mirrors the upstream
+        // `user=` subprocess argument.
+        #[cfg(unix)]
+        if let Some(uid) = self.options.user.as_deref().and_then(|u| u.parse::<u32>().ok()) {
+            command.uid(uid);
+        }
 
         let mut child = command.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -633,7 +688,9 @@ impl Transport for SubprocessCliTransport {
             let _ = tx.send(());
         }
         if let Some(handle) = self.reader_handle.take() {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), handle).await;
+            // Bounded by the read loop's graceful-shutdown escalation
+            // (grace + SIGTERM + SIGKILL, ~15s worst case) plus slack.
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(20), handle).await;
         }
         if let Some(handle) = self.stderr_handle.take() {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
@@ -666,14 +723,17 @@ async fn read_loop(
     max_buffer: usize,
     tx: mpsc::Sender<Result<Value>>,
 ) {
+    let pid = child.id();
+    if let Some(p) = pid {
+        reaper::register(p);
+    }
     let mut lines = BufReader::new(stdout).lines();
-    let mut killed = false;
+    let mut shutting_down = false;
     loop {
         tokio::select! {
             biased;
             _ = &mut shutdown => {
-                let _ = child.start_kill();
-                killed = true;
+                shutting_down = true;
                 break;
             }
             next = lines.next_line() => match next {
@@ -704,8 +764,13 @@ async fn read_loop(
         }
     }
 
-    if let Ok(status) = child.wait().await {
-        if !killed && !status.success() {
+    if shutting_down {
+        // stdin was closed by close() before signaling; give the CLI a grace
+        // period to flush its session file, then escalate. Mirrors upstream's
+        // shielded terminate/kill sequence (close(), #625).
+        graceful_terminate(&mut child, pid).await;
+    } else if let Ok(status) = child.wait().await {
+        if !status.success() {
             let code = status.code();
             let _ = tx
                 .send(Err(Error::process(
@@ -716,6 +781,34 @@ async fn read_loop(
                 .await;
         }
     }
+
+    if let Some(p) = pid {
+        reaper::unregister(p);
+    }
+}
+
+/// Waits for a graceful exit, escalating to SIGTERM then SIGKILL (each bounded).
+/// Mirrors `SubprocessCLITransport.close()`'s terminate/kill escalation.
+async fn graceful_terminate(child: &mut Child, pid: Option<u32>) {
+    use std::time::Duration;
+    let grace = Duration::from_secs(5);
+
+    if let Ok(Ok(_)) = tokio::time::timeout(grace, child.wait()).await {
+        return;
+    }
+    // SIGTERM (on non-unix, fall straight through to SIGKILL via start_kill).
+    #[cfg(unix)]
+    if let Some(p) = pid {
+        unsafe { libc::kill(p as libc::pid_t, libc::SIGTERM) };
+    }
+    #[cfg(not(unix))]
+    let _ = (pid, child.start_kill());
+    if let Ok(Ok(_)) = tokio::time::timeout(grace, child.wait()).await {
+        return;
+    }
+    // SIGKILL.
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(grace, child.wait()).await;
 }
 
 /// Background task: frame stderr into lines and forward them to the callback.
@@ -726,7 +819,11 @@ async fn stderr_loop(stderr: tokio::process::ChildStderr, callback: StderrCallba
         if trimmed.is_empty() {
             continue;
         }
-        callback(trimmed.to_string());
+        // Isolate the user's callback per line: a panic must not kill the loop
+        // and silently drop every subsequent stderr line (upstream isolates the
+        // callback the same way).
+        let line = trimmed.to_string();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(line)));
     }
 }
 

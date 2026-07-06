@@ -490,10 +490,10 @@ fn write_new_file(path: &Path, data: &str) -> Result<()> {
 // Unicode sanitization + time
 // ---------------------------------------------------------------------------
 
-/// Removes dangerous Unicode characters (zero-width, directional marks, BOM,
-/// private-use), iterating with NFKC. Mirrors `_sanitize_unicode`, minus the
-/// full `Cf`/`Co`/`Cn` general-category strip (the explicit ranges below cover
-/// the commonly-abused characters without a Unicode-category dependency).
+/// Removes dangerous Unicode characters, iterating NFKC normalization with a
+/// strip of the `Cf` (format), `Co` (private-use), and `Cn` (unassigned)
+/// general categories plus the upstream explicit ranges, until stable (max 10
+/// iterations). Faithful port of `_sanitize_unicode`.
 fn sanitize_unicode(value: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
     let mut current = value.to_string();
@@ -509,6 +509,15 @@ fn sanitize_unicode(value: &str) -> String {
 }
 
 fn is_stripped(c: char) -> bool {
+    use unicode_general_category::{get_general_category, GeneralCategory};
+    // Cf / Co / Cn general categories.
+    if matches!(
+        get_general_category(c),
+        GeneralCategory::Format | GeneralCategory::PrivateUse | GeneralCategory::Unassigned
+    ) {
+        return true;
+    }
+    // Explicit ranges (redundant with the category check, matching upstream).
     matches!(c,
         '\u{200b}'..='\u{200f}'   // zero-width, LTR/RTL marks
         | '\u{202a}'..='\u{202e}' // directional formatting
@@ -555,6 +564,15 @@ mod tests {
     fn sanitize_unicode_strips_zero_width() {
         assert_eq!(sanitize_unicode("a\u{200b}b\u{feff}c"), "abc");
         assert_eq!(sanitize_unicode("plain"), "plain");
+    }
+
+    #[test]
+    fn sanitize_unicode_strips_format_category_outside_explicit_ranges() {
+        // U+00AD SOFT HYPHEN is general category Cf but not in the explicit
+        // ranges — the category strip must catch it.
+        assert_eq!(sanitize_unicode("a\u{00ad}b"), "ab");
+        // U+2028 LINE SEPARATOR (Zl) is not stripped — normal-ish text survives.
+        assert_eq!(sanitize_unicode("hello world"), "hello world");
     }
 
     #[test]

@@ -517,4 +517,23 @@ mod tests {
         let data = json!({"type": "rate_limit_event", "uuid": "u", "session_id": "s"});
         assert!(parse_message(&data).is_err());
     }
+
+    #[test]
+    fn assistant_unknown_error_maps_to_unknown_not_none() {
+        use crate::types::AssistantMessageError;
+        // A recognized error string.
+        let data = json!({"type": "assistant", "message": {"model": "m", "content": []}, "error": "rate_limit"});
+        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        assert_eq!(a.error, Some(AssistantMessageError::RateLimit));
+
+        // An unrecognized error string is preserved as Unknown (not dropped).
+        let data = json!({"type": "assistant", "message": {"model": "m", "content": []}, "error": "some_future_error"});
+        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        assert_eq!(a.error, Some(AssistantMessageError::Unknown));
+
+        // No error field -> None.
+        let data = json!({"type": "assistant", "message": {"model": "m", "content": []}});
+        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        assert_eq!(a.error, None);
+    }
 }

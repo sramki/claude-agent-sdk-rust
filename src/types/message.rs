@@ -56,7 +56,9 @@ pub enum AssistantMessageError {
     InvalidRequest,
     /// Server error.
     ServerError,
-    /// Unknown error.
+    /// Unknown error — also the fallback for any error string the SDK does not
+    /// recognize, so a present error is never silently dropped.
+    #[serde(other)]
     Unknown,
 }
 
