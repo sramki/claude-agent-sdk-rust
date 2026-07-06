@@ -59,10 +59,15 @@ mod parse;
 mod paths;
 pub mod runtime;
 mod sessions;
+pub mod store;
 pub mod types;
 
 pub use error::{Error, Result};
 pub use mcp::{create_sdk_mcp_server, tool, SdkMcpTool, ToolAnnotations};
+pub use store::{
+    file_path_to_session_key, fold_session_summary, summary_entry_to_sdk_info,
+    InMemorySessionStore,
+};
 pub use mutations::{
     delete_session, fork_session, project_key_for_directory, rename_session, tag_session,
     ForkSessionResult,

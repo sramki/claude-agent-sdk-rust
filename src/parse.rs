@@ -120,7 +120,7 @@ fn nonempty(o: Option<String>) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Extracts the `<command-name>...</command-name>` inner text (non-greedy).
-fn command_name(s: &str) -> Option<String> {
+pub(crate) fn command_name(s: &str) -> Option<String> {
     const OPEN: &str = "<command-name>";
     const CLOSE: &str = "</command-name>";
     let start = s.find(OPEN)? + OPEN.len();
@@ -130,7 +130,7 @@ fn command_name(s: &str) -> Option<String> {
 
 /// Matches the auto-generated / system message patterns skipped when hunting
 /// for the first meaningful prompt. Mirrors `_SKIP_FIRST_PROMPT_PATTERN`.
-fn matches_skip_first_prompt(s: &str) -> bool {
+pub(crate) fn matches_skip_first_prompt(s: &str) -> bool {
     for prefix in ["<local-command-stdout>", "<session-start-hook>", "<tick>", "<goal>"] {
         if s.starts_with(prefix) {
             return true;
