@@ -87,6 +87,26 @@ impl Shared {
             self.first_result.notify_waiters();
         }
     }
+
+    /// Waits for the first result (when SDK MCP servers or hooks are present)
+    /// then closes stdin. Faithful port of `wait_for_result_and_end_input`.
+    async fn wait_and_end(&self) -> Result<()> {
+        let needs_wait = !self.sdk_mcp_servers.is_empty() || self.has_hooks;
+        if needs_wait && !self.first_result_fired.load(Ordering::SeqCst) {
+            self.first_result.notified().await;
+        }
+        let mut t = self.transport.lock().await;
+        t.end_input().await
+    }
+
+    /// Streams input messages, then waits for the first result and closes
+    /// stdin. Faithful port of `stream_input`.
+    async fn stream_input(&self, messages: Vec<Value>) -> Result<()> {
+        for message in messages {
+            self.write(&(message.to_string() + "\n")).await?;
+        }
+        self.wait_and_end().await
+    }
 }
 
 /// Handles the bidirectional control protocol over a [`Transport`].
@@ -99,8 +119,8 @@ pub struct Query {
     initialize_timeout: Duration,
     read_task: Option<JoinHandle<()>>,
     msg_rx: Option<mpsc::Receiver<Result<Value>>>,
+    initialization_result: Option<Value>,
     started: bool,
-    closed: bool,
 }
 
 impl Query {
@@ -171,8 +191,8 @@ impl Query {
             initialize_timeout: config.initialize_timeout,
             read_task: None,
             msg_rx: None,
+            initialization_result: None,
             started: false,
-            closed: false,
         }
     }
 
@@ -217,7 +237,61 @@ impl Query {
         let response = self
             .send_control_request(Value::Object(request), self.initialize_timeout)
             .await?;
+        self.initialization_result = Some(response.clone());
         Ok(Some(response))
+    }
+
+    /// The stored `initialize` response (server info), if initialized.
+    pub fn server_info(&self) -> Option<&Value> {
+        self.initialization_result.as_ref()
+    }
+
+    /// Writes a single user message to stdin. Used to send string prompts.
+    pub async fn write_user_message(&self, content: &str, session_id: &str) -> Result<()> {
+        let msg = json!({
+            "type": "user",
+            "message": {"role": "user", "content": content},
+            "parent_tool_use_id": null,
+            "session_id": session_id,
+        });
+        self.shared.write(&(msg.to_string() + "\n")).await
+    }
+
+    /// Writes a sequence of raw input messages, injecting `session_id` when
+    /// absent. Faithful to `ClaudeSDKClient.query` for iterable prompts.
+    pub async fn write_messages(&self, messages: Vec<Value>, session_id: &str) -> Result<()> {
+        for mut message in messages {
+            if let Some(obj) = message.as_object_mut() {
+                obj.entry("session_id")
+                    .or_insert_with(|| Value::String(session_id.to_string()));
+            }
+            self.shared.write(&(message.to_string() + "\n")).await?;
+        }
+        Ok(())
+    }
+
+    /// Spawns a background task that waits for the first result then closes
+    /// stdin (used after writing a one-shot string prompt).
+    pub fn spawn_wait_and_end(&self) {
+        let shared = self.shared.clone();
+        tokio::spawn(async move {
+            let _ = shared.wait_and_end().await;
+        });
+    }
+
+    /// Spawns a background task that streams the given input messages, then
+    /// waits for the first result and closes stdin.
+    pub fn spawn_stream_input(&self, messages: Vec<Value>) {
+        let shared = self.shared.clone();
+        tokio::spawn(async move {
+            let _ = shared.stream_input(messages).await;
+        });
+    }
+
+    /// Takes the raw message receiver out of the query (callable once). Used by
+    /// the public API to build a typed message stream without borrowing.
+    pub fn take_messages(&mut self) -> Option<mpsc::Receiver<Result<Value>>> {
+        self.msg_rx.take()
     }
 
     fn next_request_id(&self) -> String {
@@ -284,24 +358,13 @@ impl Query {
     /// Streams input messages, then waits for the first result (if callbacks
     /// require it) and closes stdin. Faithful port of `stream_input`.
     pub async fn stream_input(&self, messages: Vec<Value>) -> Result<()> {
-        for message in messages {
-            if self.closed {
-                break;
-            }
-            self.shared.write(&(message.to_string() + "\n")).await?;
-        }
-        self.wait_for_result_and_end_input().await
+        self.shared.stream_input(messages).await
     }
 
     /// Waits for the first result (when SDK MCP servers or hooks are present)
     /// then closes stdin. Faithful port of `wait_for_result_and_end_input`.
     pub async fn wait_for_result_and_end_input(&self) -> Result<()> {
-        let needs_wait = !self.shared.sdk_mcp_servers.is_empty() || self.shared.has_hooks;
-        if needs_wait && !self.shared.first_result_fired.load(Ordering::SeqCst) {
-            self.shared.first_result.notified().await;
-        }
-        let mut t = self.shared.transport.lock().await;
-        t.end_input().await
+        self.shared.wait_and_end().await
     }
 
     /// Receives the next SDK message. `Ok(None)` marks end of stream; `Err`
@@ -397,7 +460,6 @@ impl Query {
 
     /// Closes the query and its transport.
     pub async fn close(&mut self) -> Result<()> {
-        self.closed = true;
         if let Some(handle) = self.read_task.take() {
             handle.abort();
             let _ = handle.await;

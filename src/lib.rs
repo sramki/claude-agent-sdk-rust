@@ -60,7 +60,10 @@ mod sessions;
 pub mod types;
 
 pub use error::{Error, Result};
-pub use runtime::parse_message;
+pub use runtime::{
+    query, query_with_transport, parse_message, Client, MessageStream, Prompt,
+    SubprocessCliTransport, Transport,
+};
 pub use sessions::{
     get_session_info, get_session_messages, get_subagent_messages, list_sessions, list_subagents,
 };
