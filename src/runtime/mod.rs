@@ -5,5 +5,7 @@
 //! incrementally; this module currently exposes the message parser.
 
 pub mod message_parser;
+pub mod transport;
 
 pub use message_parser::parse_message;
+pub use transport::{SubprocessCliTransport, Transport};

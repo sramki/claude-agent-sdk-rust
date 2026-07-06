@@ -1,0 +1,831 @@
+//! Subprocess transport over the Claude Code CLI.
+//!
+//! Faithful port of `_internal/transport/subprocess_cli.py` (and the abstract
+//! `Transport` in `transport/__init__.py`). The pure argument builder
+//! ([`build_command`]) and line parser ([`parse_stdout_line`]) are unit-tested;
+//! the async I/O uses tokio. Stdout is read on a background task that frames
+//! NDJSON lines and forwards parsed values over a channel, so writing to stdin
+//! and reading messages proceed concurrently.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+
+use async_trait::async_trait;
+use futures_core::Stream;
+use serde_json::{json, Map, Value};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
+use tokio_stream::wrappers::ReceiverStream;
+
+use crate::error::{Error, Result};
+use crate::types::{
+    ClaudeAgentOptions, McpServers, Skills, StderrCallback, SystemPrompt, ThinkingConfig,
+    ToolsConfig,
+};
+
+const DEFAULT_MAX_BUFFER_SIZE: usize = 1024 * 1024;
+const MINIMUM_CLAUDE_CODE_VERSION: (u32, u32, u32) = (2, 0, 0);
+
+/// The version reported to the CLI via `CLAUDE_AGENT_SDK_VERSION`.
+const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// A stream of raw CLI messages.
+pub type MessageStream = Pin<Box<dyn Stream<Item = Result<Value>> + Send>>;
+
+/// Transport abstraction. Mirrors the Python `Transport` ABC.
+#[async_trait]
+pub trait Transport: Send {
+    /// Starts the underlying transport.
+    async fn connect(&mut self) -> Result<()>;
+    /// Writes raw data (typically one JSON line) to the transport.
+    async fn write(&mut self, data: &str) -> Result<()>;
+    /// Ends the input stream (closes stdin).
+    async fn end_input(&mut self) -> Result<()>;
+    /// Takes the message stream. Valid once after [`connect`](Self::connect).
+    fn read_messages(&mut self) -> MessageStream;
+    /// Closes the transport and cleans up.
+    async fn close(&mut self) -> Result<()>;
+    /// Whether the transport is ready for communication.
+    fn is_ready(&self) -> bool;
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers (unit-tested)
+// ---------------------------------------------------------------------------
+
+/// Parses one complete NDJSON stdout line. Returns `Ok(None)` for blank or
+/// non-JSON lines (e.g. `[SandboxDebug] ...`), and an error for a line that
+/// looks like JSON but does not parse. Mirrors `_parse_stdout_line`.
+pub(crate) fn parse_stdout_line(line: &str) -> Result<Option<Value>> {
+    let line = line.trim();
+    if line.is_empty() || !line.starts_with('{') {
+        return Ok(None);
+    }
+    match serde_json::from_str::<Value>(line) {
+        Ok(v) => Ok(Some(v)),
+        Err(e) => Err(Error::json_decode(line, e)),
+    }
+}
+
+/// Computes the effective `allowed_tools` and `setting_sources` after applying
+/// skill defaults. Mirrors `_apply_skills_defaults`.
+fn apply_skills_defaults(options: &ClaudeAgentOptions) -> (Vec<String>, Option<Vec<String>>) {
+    let mut allowed_tools = options.allowed_tools.clone();
+    let mut setting_sources: Option<Vec<String>> = options.setting_sources.as_ref().map(|ss| {
+        ss.iter()
+            .map(|s| serde_json::to_value(s).unwrap().as_str().unwrap().to_string())
+            .collect()
+    });
+
+    match &options.skills {
+        None => return (allowed_tools, setting_sources),
+        Some(Skills::All) => {
+            if !allowed_tools.iter().any(|t| t == "Skill") {
+                allowed_tools.push("Skill".to_string());
+            }
+        }
+        Some(Skills::List(names)) => {
+            for name in names {
+                let pattern = format!("Skill({name})");
+                if !allowed_tools.contains(&pattern) {
+                    allowed_tools.push(pattern);
+                }
+            }
+        }
+    }
+
+    if setting_sources.is_none() {
+        setting_sources = Some(vec!["user".to_string(), "project".to_string()]);
+    }
+    (allowed_tools, setting_sources)
+}
+
+/// Builds the settings value, merging sandbox settings if provided. Mirrors
+/// `_build_settings_value`.
+fn build_settings_value(options: &ClaudeAgentOptions) -> Option<String> {
+    let has_settings = options.settings.is_some();
+    let has_sandbox = options.sandbox.is_some();
+    if !has_settings && !has_sandbox {
+        return None;
+    }
+    if has_settings && !has_sandbox {
+        return options.settings.clone();
+    }
+
+    let mut settings_obj: Map<String, Value> = Map::new();
+    if let Some(settings) = &options.settings {
+        let s = settings.trim();
+        let parsed = if s.starts_with('{') && s.ends_with('}') {
+            serde_json::from_str::<Map<String, Value>>(s).ok()
+        } else {
+            std::fs::read_to_string(s)
+                .ok()
+                .and_then(|c| serde_json::from_str::<Map<String, Value>>(&c).ok())
+        };
+        if let Some(p) = parsed {
+            settings_obj = p;
+        }
+    }
+    if let Some(sandbox) = &options.sandbox {
+        settings_obj.insert("sandbox".into(), serde_json::to_value(sandbox).unwrap());
+    }
+    Some(Value::Object(settings_obj).to_string())
+}
+
+fn wire_str<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_value(v)
+        .ok()
+        .and_then(|x| x.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// Builds the full CLI command (excluding the executable's own resolution).
+/// Faithful port of `_build_command`.
+pub(crate) fn build_command(cli_path: &str, options: &ClaudeAgentOptions) -> Vec<String> {
+    let mut cmd: Vec<String> = vec![
+        cli_path.to_string(),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--verbose".into(),
+    ];
+
+    // System prompt.
+    match &options.system_prompt {
+        None => {
+            cmd.push("--system-prompt".into());
+            cmd.push(String::new());
+        }
+        Some(SystemPrompt::Text(s)) => {
+            cmd.push("--system-prompt".into());
+            cmd.push(s.clone());
+        }
+        Some(SystemPrompt::File(path)) => {
+            cmd.push("--system-prompt-file".into());
+            cmd.push(path.clone());
+        }
+        Some(SystemPrompt::Preset(p)) => {
+            if let Some(append) = &p.append {
+                cmd.push("--append-system-prompt".into());
+                cmd.push(append.clone());
+            }
+        }
+    }
+
+    // Tools.
+    if let Some(tools) = &options.tools {
+        match tools {
+            ToolsConfig::List(list) => {
+                cmd.push("--tools".into());
+                cmd.push(list.join(","));
+            }
+            ToolsConfig::Preset => {
+                cmd.push("--tools".into());
+                cmd.push("default".into());
+            }
+        }
+    }
+
+    let (allowed_tools, setting_sources) = apply_skills_defaults(options);
+    if !allowed_tools.is_empty() {
+        cmd.push("--allowedTools".into());
+        cmd.push(allowed_tools.join(","));
+    }
+
+    if let Some(n) = options.max_turns {
+        if n != 0 {
+            cmd.push("--max-turns".into());
+            cmd.push(n.to_string());
+        }
+    }
+    if let Some(b) = options.max_budget_usd {
+        cmd.push("--max-budget-usd".into());
+        cmd.push(b.to_string());
+    }
+    if !options.disallowed_tools.is_empty() {
+        cmd.push("--disallowedTools".into());
+        cmd.push(options.disallowed_tools.join(","));
+    }
+    if let Some(tb) = &options.task_budget {
+        cmd.push("--task-budget".into());
+        cmd.push(tb.total.to_string());
+    }
+    if let Some(model) = &options.model {
+        cmd.push("--model".into());
+        cmd.push(model.clone());
+    }
+    if let Some(fm) = &options.fallback_model {
+        cmd.push("--fallback-model".into());
+        cmd.push(fm.clone());
+    }
+    if !options.betas.is_empty() {
+        let joined = options
+            .betas
+            .iter()
+            .map(wire_str)
+            .collect::<Vec<_>>()
+            .join(",");
+        cmd.push("--betas".into());
+        cmd.push(joined);
+    }
+    if let Some(name) = &options.permission_prompt_tool_name {
+        cmd.push("--permission-prompt-tool".into());
+        cmd.push(name.clone());
+    }
+    if let Some(pm) = &options.permission_mode {
+        cmd.push("--permission-mode".into());
+        cmd.push(wire_str(pm));
+    }
+    if options.continue_conversation {
+        cmd.push("--continue".into());
+    }
+    if let Some(resume) = &options.resume {
+        cmd.push("--resume".into());
+        cmd.push(resume.clone());
+    }
+    if let Some(sid) = &options.session_id {
+        cmd.push("--session-id".into());
+        cmd.push(sid.clone());
+    }
+    if let Some(settings_value) = build_settings_value(options) {
+        cmd.push("--settings".into());
+        cmd.push(settings_value);
+    }
+    for dir in &options.add_dirs {
+        cmd.push("--add-dir".into());
+        cmd.push(dir.to_string_lossy().into_owned());
+    }
+
+    // MCP servers.
+    match &options.mcp_servers {
+        McpServers::Map(map) if !map.is_empty() => {
+            let servers: Map<String, Value> = map
+                .iter()
+                .map(|(name, config)| (name.clone(), config.to_wire()))
+                .collect();
+            cmd.push("--mcp-config".into());
+            cmd.push(json!({ "mcpServers": servers }).to_string());
+        }
+        McpServers::Path(p) => {
+            cmd.push("--mcp-config".into());
+            cmd.push(p.to_string_lossy().into_owned());
+        }
+        _ => {}
+    }
+
+    if options.include_partial_messages {
+        cmd.push("--include-partial-messages".into());
+    }
+    if options.include_hook_events {
+        cmd.push("--include-hook-events".into());
+    }
+    if options.strict_mcp_config {
+        cmd.push("--strict-mcp-config".into());
+    }
+    if options.fork_session {
+        cmd.push("--fork-session".into());
+    }
+    if options.session_store.is_some() {
+        cmd.push("--session-mirror".into());
+    }
+    if let Some(ss) = &setting_sources {
+        cmd.push(format!("--setting-sources={}", ss.join(",")));
+    }
+    for plugin in &options.plugins {
+        // Only local plugins are supported (matches upstream).
+        cmd.push("--plugin-dir".into());
+        cmd.push(plugin.path.clone());
+    }
+    for (flag, value) in &options.extra_args {
+        match value {
+            None => cmd.push(format!("--{flag}")),
+            Some(v) => {
+                cmd.push(format!("--{flag}"));
+                cmd.push(v.clone());
+            }
+        }
+    }
+
+    // Thinking config takes precedence over deprecated max_thinking_tokens.
+    if let Some(thinking) = &options.thinking {
+        match thinking {
+            ThinkingConfig::Adaptive { display } => {
+                cmd.push("--thinking".into());
+                cmd.push("adaptive".into());
+                if let Some(d) = display {
+                    cmd.push("--thinking-display".into());
+                    cmd.push(wire_str(d));
+                }
+            }
+            ThinkingConfig::Enabled {
+                budget_tokens,
+                display,
+            } => {
+                cmd.push("--max-thinking-tokens".into());
+                cmd.push(budget_tokens.to_string());
+                if let Some(d) = display {
+                    cmd.push("--thinking-display".into());
+                    cmd.push(wire_str(d));
+                }
+            }
+            ThinkingConfig::Disabled => {
+                cmd.push("--thinking".into());
+                cmd.push("disabled".into());
+            }
+        }
+    } else if let Some(mtt) = options.max_thinking_tokens {
+        cmd.push("--max-thinking-tokens".into());
+        cmd.push(mtt.to_string());
+    }
+
+    if let Some(effort) = &options.effort {
+        cmd.push("--effort".into());
+        cmd.push(wire_str(effort));
+    }
+
+    if let Some(of) = &options.output_format {
+        if of.get("type").and_then(Value::as_str) == Some("json_schema") {
+            if let Some(schema) = of.get("schema") {
+                cmd.push("--json-schema".into());
+                cmd.push(schema.to_string());
+            }
+        }
+    }
+
+    cmd.push("--input-format".into());
+    cmd.push("stream-json".into());
+
+    cmd
+}
+
+/// Finds the Claude Code CLI binary. Mirrors `_find_cli` (minus the bundled
+/// binary, which the Rust crate does not ship).
+pub(crate) fn find_cli() -> Result<String> {
+    let exe = if cfg!(windows) { "claude.exe" } else { "claude" };
+
+    // Search PATH.
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let candidate = dir.join(exe);
+            if is_executable_file(&candidate) {
+                return Ok(candidate.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    // Fallback well-known locations.
+    if let Some(home) = home_dir() {
+        let locations = [
+            home.join(".npm-global/bin/claude"),
+            PathBuf::from("/usr/local/bin/claude"),
+            home.join(".local/bin/claude"),
+            home.join("node_modules/.bin/claude"),
+            home.join(".yarn/bin/claude"),
+            home.join(".claude/local/claude"),
+        ];
+        for path in locations {
+            if path.is_file() {
+                return Ok(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    Err(Error::cli_not_found(None::<String>))
+}
+
+fn is_executable_file(p: &Path) -> bool {
+    p.is_file()
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        })
+}
+
+fn parse_version_triple(s: &str) -> Option<(u32, u32, u32)> {
+    let head: String = s
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let parts: Vec<&str> = head.split('.').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    Some((
+        parts[0].parse().ok()?,
+        parts[1].parse().ok()?,
+        parts[2].parse().ok()?,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Subprocess transport
+// ---------------------------------------------------------------------------
+
+/// Subprocess transport using the Claude Code CLI.
+pub struct SubprocessCliTransport {
+    options: ClaudeAgentOptions,
+    cli_path: Option<String>,
+    cwd: Option<String>,
+    ready: bool,
+    max_buffer_size: usize,
+    stdin: Option<ChildStdin>,
+    msg_rx: Option<mpsc::Receiver<Result<Value>>>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    reader_handle: Option<JoinHandle<()>>,
+    stderr_handle: Option<JoinHandle<()>>,
+}
+
+impl SubprocessCliTransport {
+    /// Creates a transport for the given options. Call [`connect`] to start.
+    ///
+    /// [`connect`]: Transport::connect
+    pub fn new(options: ClaudeAgentOptions) -> Self {
+        let cli_path = options.cli_path.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let cwd = options.cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let max_buffer_size = options.max_buffer_size.unwrap_or(DEFAULT_MAX_BUFFER_SIZE);
+        SubprocessCliTransport {
+            options,
+            cli_path,
+            cwd,
+            ready: false,
+            max_buffer_size,
+            stdin: None,
+            msg_rx: None,
+            shutdown_tx: None,
+            reader_handle: None,
+            stderr_handle: None,
+        }
+    }
+
+    async fn check_version(&self, cli_path: &str) {
+        let fut = Command::new(cli_path).arg("-v").output();
+        if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(2), fut).await {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if let Some(v) = parse_version_triple(text.trim()) {
+                if v < MINIMUM_CLAUDE_CODE_VERSION {
+                    eprintln!(
+                        "warning: Claude Code version {}.{}.{} at {} is below the minimum {}.{}.{} supported by the Agent SDK; some features may not work.",
+                        v.0, v.1, v.2, cli_path,
+                        MINIMUM_CLAUDE_CODE_VERSION.0,
+                        MINIMUM_CLAUDE_CODE_VERSION.1,
+                        MINIMUM_CLAUDE_CODE_VERSION.2,
+                    );
+                }
+            }
+        }
+    }
+
+    fn build_env(&self) -> HashMap<String, String> {
+        let mut env: HashMap<String, String> = std::env::vars()
+            .filter(|(k, _)| k != "CLAUDECODE")
+            .collect();
+        env.insert("CLAUDE_CODE_ENTRYPOINT".into(), "sdk-rust".into());
+        for (k, v) in &self.options.env {
+            env.insert(k.clone(), v.clone());
+        }
+        env.insert("CLAUDE_AGENT_SDK_VERSION".into(), SDK_VERSION.into());
+        if self.options.enable_file_checkpointing {
+            env.insert(
+                "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING".into(),
+                "true".into(),
+            );
+        }
+        if let Some(cwd) = &self.cwd {
+            env.insert("PWD".into(), cwd.clone());
+        }
+        env
+    }
+}
+
+#[async_trait]
+impl Transport for SubprocessCliTransport {
+    async fn connect(&mut self) -> Result<()> {
+        if self.reader_handle.is_some() {
+            return Ok(());
+        }
+        if self.cli_path.is_none() {
+            self.cli_path = Some(find_cli()?);
+        }
+        let cli_path = self.cli_path.clone().unwrap();
+
+        if std::env::var_os("CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK").is_none() {
+            self.check_version(&cli_path).await;
+        }
+
+        // Fail clearly on a missing working directory.
+        if let Some(cwd) = &self.cwd {
+            if !Path::new(cwd).exists() {
+                return Err(Error::connection(format!(
+                    "Working directory does not exist: {cwd}"
+                )));
+            }
+        }
+
+        let cmd = build_command(&cli_path, &self.options);
+        let pipe_stderr = self.options.stderr.is_some();
+
+        let mut command = Command::new(&cmd[0]);
+        command
+            .args(&cmd[1..])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(if pipe_stderr {
+                std::process::Stdio::piped()
+            } else {
+                std::process::Stdio::inherit()
+            })
+            .env_clear()
+            .envs(self.build_env())
+            .kill_on_drop(true);
+        if let Some(cwd) = &self.cwd {
+            command.current_dir(cwd);
+        }
+
+        let mut child = command.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                Error::cli_not_found(Some(cli_path.clone()))
+            } else {
+                Error::connection(format!("Failed to start Claude Code: {e}"))
+            }
+        })?;
+
+        let stdin = child.stdin.take();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| Error::connection("Failed to capture CLI stdout"))?;
+        let stderr = child.stderr.take();
+
+        // Background stdout reader → channel.
+        let (tx, rx) = mpsc::channel::<Result<Value>>(1024);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let max_buffer = self.max_buffer_size;
+        let reader_handle =
+            tokio::spawn(read_loop(child, stdout, shutdown_rx, max_buffer, tx));
+
+        // Background stderr reader → callback.
+        let stderr_handle = match (stderr, self.options.stderr.clone()) {
+            (Some(stderr), Some(cb)) => Some(tokio::spawn(stderr_loop(stderr, cb))),
+            _ => None,
+        };
+
+        self.stdin = stdin;
+        self.msg_rx = Some(rx);
+        self.shutdown_tx = Some(shutdown_tx);
+        self.reader_handle = Some(reader_handle);
+        self.stderr_handle = stderr_handle;
+        self.ready = true;
+        Ok(())
+    }
+
+    async fn write(&mut self, data: &str) -> Result<()> {
+        if !self.ready {
+            return Err(Error::connection("ProcessTransport is not ready for writing"));
+        }
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| Error::connection("ProcessTransport is not ready for writing"))?;
+        if let Err(e) = stdin.write_all(data.as_bytes()).await {
+            self.ready = false;
+            return Err(Error::connection(format!(
+                "Failed to write to process stdin: {e}"
+            )));
+        }
+        if let Err(e) = stdin.flush().await {
+            self.ready = false;
+            return Err(Error::connection(format!(
+                "Failed to write to process stdin: {e}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn end_input(&mut self) -> Result<()> {
+        if let Some(mut stdin) = self.stdin.take() {
+            let _ = stdin.shutdown().await;
+        }
+        Ok(())
+    }
+
+    fn read_messages(&mut self) -> MessageStream {
+        match self.msg_rx.take() {
+            Some(rx) => Box::pin(ReceiverStream::new(rx)),
+            None => Box::pin(tokio_stream::empty()),
+        }
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        self.ready = false;
+        if let Some(mut stdin) = self.stdin.take() {
+            let _ = stdin.shutdown().await;
+        }
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.reader_handle.take() {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), handle).await;
+        }
+        if let Some(handle) = self.stderr_handle.take() {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        }
+        self.msg_rx = None;
+        Ok(())
+    }
+
+    fn is_ready(&self) -> bool {
+        self.ready
+    }
+}
+
+fn buffer_exceeded_error(len: usize, max: usize) -> Error {
+    // Synthesize a decode error to carry the buffer-overflow diagnostic,
+    // matching the upstream CLIJSONDecodeError for oversized messages.
+    let source = serde_json::from_str::<Value>("").unwrap_err();
+    Error::json_decode(
+        format!("JSON message exceeded maximum buffer size of {max} bytes (got {len})"),
+        source,
+    )
+}
+
+/// Background task: read framed NDJSON lines from stdout, forward parsed values,
+/// then reap the process and surface a non-zero exit as a `ProcessError`.
+async fn read_loop(
+    mut child: Child,
+    stdout: ChildStdout,
+    mut shutdown: oneshot::Receiver<()>,
+    max_buffer: usize,
+    tx: mpsc::Sender<Result<Value>>,
+) {
+    let mut lines = BufReader::new(stdout).lines();
+    let mut killed = false;
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => {
+                let _ = child.start_kill();
+                killed = true;
+                break;
+            }
+            next = lines.next_line() => match next {
+                Ok(Some(line)) => {
+                    if line.len() > max_buffer {
+                        let _ = tx.send(Err(buffer_exceeded_error(line.len(), max_buffer))).await;
+                        break;
+                    }
+                    match parse_stdout_line(&line) {
+                        Ok(Some(v)) => {
+                            if tx.send(Ok(v)).await.is_err() {
+                                return; // receiver dropped
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            let _ = tx.send(Err(e)).await;
+                            break;
+                        }
+                    }
+                }
+                Ok(None) => break, // EOF
+                Err(e) => {
+                    let _ = tx.send(Err(Error::Io(e))).await;
+                    break;
+                }
+            }
+        }
+    }
+
+    if let Ok(status) = child.wait().await {
+        if !killed && !status.success() {
+            let code = status.code();
+            let _ = tx
+                .send(Err(Error::process(
+                    format!("Command failed with exit code {}", code.unwrap_or(-1)),
+                    code,
+                    Some("Check stderr output for details".into()),
+                )))
+                .await;
+        }
+    }
+}
+
+/// Background task: frame stderr into lines and forward them to the callback.
+async fn stderr_loop(stderr: tokio::process::ChildStderr, callback: StderrCallback) {
+    let mut lines = BufReader::new(stderr).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            continue;
+        }
+        callback(trimmed.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ClaudeAgentOptions, PermissionMode, SystemPrompt};
+
+    fn base() -> ClaudeAgentOptions {
+        ClaudeAgentOptions::default()
+    }
+
+    #[test]
+    fn command_has_stream_json_and_input_format() {
+        let cmd = build_command("/bin/claude", &base());
+        assert_eq!(cmd[0], "/bin/claude");
+        assert!(cmd.windows(2).any(|w| w == ["--output-format", "stream-json"]));
+        assert!(cmd.windows(2).any(|w| w == ["--input-format", "stream-json"]));
+        assert!(cmd.contains(&"--verbose".to_string()));
+    }
+
+    #[test]
+    fn default_system_prompt_is_empty_flag() {
+        let cmd = build_command("/bin/claude", &base());
+        let idx = cmd.iter().position(|a| a == "--system-prompt").unwrap();
+        assert_eq!(cmd[idx + 1], "");
+    }
+
+    #[test]
+    fn text_system_prompt() {
+        let mut o = base();
+        o.system_prompt = Some(SystemPrompt::Text("Be terse".into()));
+        let cmd = build_command("/bin/claude", &o);
+        let idx = cmd.iter().position(|a| a == "--system-prompt").unwrap();
+        assert_eq!(cmd[idx + 1], "Be terse");
+    }
+
+    #[test]
+    fn permission_mode_and_model_flags() {
+        let mut o = base();
+        o.permission_mode = Some(PermissionMode::AcceptEdits);
+        o.model = Some("claude-opus-4-5".into());
+        let cmd = build_command("/bin/claude", &o);
+        assert!(cmd.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]));
+        assert!(cmd.windows(2).any(|w| w == ["--model", "claude-opus-4-5"]));
+    }
+
+    #[test]
+    fn allowed_and_disallowed_tools() {
+        let mut o = base();
+        o.allowed_tools = vec!["Read".into(), "Write".into()];
+        o.disallowed_tools = vec!["Bash".into()];
+        let cmd = build_command("/bin/claude", &o);
+        assert!(cmd.windows(2).any(|w| w == ["--allowedTools", "Read,Write"]));
+        assert!(cmd.windows(2).any(|w| w == ["--disallowedTools", "Bash"]));
+    }
+
+    #[test]
+    fn skills_all_injects_skill_and_setting_sources() {
+        let mut o = base();
+        o.skills = Some(Skills::All);
+        let cmd = build_command("/bin/claude", &o);
+        assert!(cmd.windows(2).any(|w| w == ["--allowedTools", "Skill"]));
+        assert!(cmd.iter().any(|a| a == "--setting-sources=user,project"));
+    }
+
+    #[test]
+    fn thinking_enabled_uses_max_tokens() {
+        let mut o = base();
+        o.thinking = Some(ThinkingConfig::Enabled {
+            budget_tokens: 2048,
+            display: None,
+        });
+        let cmd = build_command("/bin/claude", &o);
+        assert!(cmd.windows(2).any(|w| w == ["--max-thinking-tokens", "2048"]));
+    }
+
+    #[test]
+    fn extra_args_bool_and_valued() {
+        let mut o = base();
+        o.extra_args.insert("foo".into(), None);
+        o.extra_args.insert("bar".into(), Some("baz".into()));
+        let cmd = build_command("/bin/claude", &o);
+        assert!(cmd.iter().any(|a| a == "--foo"));
+        assert!(cmd.windows(2).any(|w| w == ["--bar", "baz"]));
+    }
+
+    #[test]
+    fn parse_stdout_line_variants() {
+        assert!(parse_stdout_line("").unwrap().is_none());
+        assert!(parse_stdout_line("   ").unwrap().is_none());
+        assert!(parse_stdout_line("[SandboxDebug] hi").unwrap().is_none());
+        assert!(parse_stdout_line(r#"{"type":"x"}"#).unwrap().is_some());
+        assert!(parse_stdout_line("{not json").is_err());
+    }
+
+    #[test]
+    fn version_triple_parse() {
+        assert_eq!(parse_version_triple("2.1.3 (extra)"), Some((2, 1, 3)));
+        assert_eq!(parse_version_triple("nope"), None);
+    }
+}
