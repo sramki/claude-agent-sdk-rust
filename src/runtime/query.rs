@@ -85,8 +85,6 @@ struct Shared {
     has_hooks: bool,
     /// Transcript-mirror batcher (present when a `session_store` is configured).
     batcher: Option<crate::store_mirror::TranscriptMirrorBatcher>,
-    /// Output sender — shared by the read loop and the mirror `on_error` hook.
-    out_tx: mpsc::Sender<Result<Value>>,
 }
 
 impl Shared {
@@ -132,6 +130,10 @@ pub struct Query {
     initialize_timeout: Duration,
     read_task: Option<JoinHandle<()>>,
     msg_rx: Option<mpsc::Receiver<Result<Value>>>,
+    /// The strong output sender, handed to the read loop by `start()`. The
+    /// mirror `on_error` hook only holds a `WeakSender`, so the consumer channel
+    /// closes once the read loop's sender drops (end of stream).
+    out_tx: Option<mpsc::Sender<Result<Value>>>,
     initialization_result: Option<Value>,
     started: bool,
 }
@@ -186,17 +188,20 @@ impl Query {
             None
         };
 
-        // Create the output channel now so the mirror `on_error` hook can share
-        // its sender with the read loop.
+        // Create the output channel now so the mirror `on_error` hook can hold a
+        // WEAK sender (a strong clone here would keep the consumer channel open
+        // forever, so end-of-stream would never be observed).
         let (out_tx, out_rx) = mpsc::channel::<Result<Value>>(100);
 
         // Build the transcript-mirror batcher when a store is configured.
         let batcher = config.session_store.map(|store| {
-            let out = out_tx.clone();
+            let weak = out_tx.downgrade();
             let on_error: crate::store_mirror::MirrorOnError = Arc::new(move |key, error| {
-                let out = out.clone();
+                let weak = weak.clone();
                 Box::pin(async move {
-                    let _ = out.try_send(Ok(mirror_error_message(key, error)));
+                    if let Some(out) = weak.upgrade() {
+                        let _ = out.try_send(Ok(mirror_error_message(key, error)));
+                    }
                 })
             });
             crate::store_mirror::TranscriptMirrorBatcher::new(
@@ -219,7 +224,6 @@ impl Query {
             first_result: Notify::new(),
             first_result_fired: AtomicBool::new(false),
             batcher,
-            out_tx,
         });
 
         Query {
@@ -231,6 +235,7 @@ impl Query {
             initialize_timeout: config.initialize_timeout,
             read_task: None,
             msg_rx: Some(out_rx),
+            out_tx: Some(out_tx),
             initialization_result: None,
             started: false,
         }
@@ -252,7 +257,9 @@ impl Query {
             t.read_messages()
         };
         let shared = self.shared.clone();
-        let out_tx = self.shared.out_tx.clone();
+        // Hand the sole strong sender to the read loop; when it ends, the sender
+        // drops and the consumer channel closes.
+        let out_tx = self.out_tx.take().expect("out_tx present before start");
         self.read_task = Some(tokio::spawn(read_loop(shared, stream, out_tx)));
     }
 

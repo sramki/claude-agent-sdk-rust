@@ -65,6 +65,7 @@ mod session_resume;
 mod sessions;
 pub mod store;
 mod store_import;
+pub mod testing;
 mod store_mirror;
 mod store_read;
 pub mod types;

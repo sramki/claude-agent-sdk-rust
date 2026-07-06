@@ -55,15 +55,23 @@ MSRV: Rust 1.83.
 **Session write ops**
 
 - **`rename_session`** / **`tag_session`** / **`delete_session`** /
-  **`fork_session`**, and the `InMemorySessionStore` reference `SessionStore`.
+  **`fork_session`** (local and `*_via_store`).
+
+**External `SessionStore`**
+
+- Implement the `SessionStore` trait for any backend (Postgres/S3/Redis/…);
+  `InMemorySessionStore` is a ready reference impl, and
+  `testing::run_session_store_conformance` checks an adapter against the contract.
+- **Live mirroring** — set `options.session_store` and the runtime streams the
+  transcript into your store as the session runs.
+- **Store-backed readers** — `list_sessions_from_store`, `get_session_*_from_store`.
+- **Resume from a store** — `resume`/`continue_conversation` + a store loads the
+  session back and resumes it, even with no local copy.
+- **`import_session_to_store`** — replay a local session into a store.
 
 The reader degrades gracefully: a missing directory, unreadable file, or
 malformed line yields `Ok` (empty), not an error. Only invalid *input* (a bad
 UUID, an empty title) is an `Err`.
-
-> Not yet ported (upstream's *defer until demanded* set): the store-backed async
-> listing variants, `SessionStore`-mirrored resume/import, and the transcript
-> mirror batcher. See `CLAUDE.md`.
 
 ## Usage
 
@@ -110,13 +118,13 @@ $ cargo run --example list_sessions -- /my/proj  # one project directory
 The reader functions are `Result`-based; `limit = Some(0)` means "no limit"
 (matching the upstream `limit > 0` check).
 
-## Scope / non-goals
+## Scope
 
-Ported: the reader, the live runtime (`query`/`Client` over the stream-json
-control protocol, hooks, permission callbacks, in-process MCP servers), and local
-session write ops + the `InMemorySessionStore`. The deeper `SessionStore`↔runtime
-integration (store-backed listing, mirrored resume/import, the transcript-mirror
-batcher) is **not** yet ported — see `CLAUDE.md`.
+The full SDK surface is ported: the reader, the live runtime (`query`/`Client`
+over the stream-json control protocol, hooks, permission callbacks, in-process
+MCP servers), session write ops, and the complete external-`SessionStore`
+integration (live mirroring, store-backed reads, resume/import, conformance
+harness). See `CLAUDE.md` for the small remaining fidelity notes.
 
 ## Attribution & license
 

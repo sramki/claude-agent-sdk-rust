@@ -46,14 +46,20 @@ behavioral discrepancies found. Store-layer test files map to the remaining buck
 - **Session mutations** (`mutations`) — local `rename`/`tag`/`delete`/`fork` + `project_key_for_directory`.
 - **SessionStore core** (`store`) — `InMemorySessionStore`, `fold_session_summary`,
   `summary_entry_to_sdk_info`, `file_path_to_session_key`.
+- **SessionStore ↔ runtime integration (former "bucket A") — DONE:**
+  - Store-backed async readers (`store_read`): `list_sessions_from_store` (summary fast-path +
+    gap-fill / bounded-concurrency slow-path), `get_session_*_from_store`, subagent variants.
+  - `import_session_to_store` (`store_import`).
+  - Live transcript-mirror batcher (`store_mirror`) wired into the `Query` read loop (enqueue
+    `transcript_mirror` frames, flush on result, `mirror_error` surfaced) + `validate_session_store_options`.
+  - Store-backed resume materialization (`session_resume`): temp `CLAUDE_CONFIG_DIR`, auth copy,
+    subagent reconstruction, wired into `setup_query` for `query()`/`Client`.
+  - `*_via_store` mutation variants (`mutations`).
+  - Reusable conformance harness (`testing::run_session_store_conformance`).
 
-**Remaining (deepest store↔runtime integration; the upstream `defer until demanded` set):**
-- Store-backed async listing variants (`list_sessions_from_store`, `get_session_*_from_store`, …).
-- `import_session_to_store`; session-resume materialization (`materialize_resume_session`,
-  `apply_materialized_options`); `validate_session_store_options`.
-- Transcript-mirror batcher + runtime wiring (the `Query` read loop currently drops
-  `transcript_mirror` frames; `--session-mirror` flag is emitted).
-- `*_via_store` mutation variants.
+**Remaining:** nothing structural — the whole SDK surface is ported. Open items are the small
+fidelity notes (OTEL trace propagation not ported; username→uid resolution not done) and re-syncing
+to newer upstream versions.
 
 ## Reference
 
