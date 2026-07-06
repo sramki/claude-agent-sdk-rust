@@ -636,4 +636,35 @@ mod tests {
         let info = parse_session_info_from_lite("sid", &lite, None).unwrap();
         assert_eq!(info.created_at, None);
     }
+
+    #[test]
+    fn iso_timestamp_with_nonzero_offsets() {
+        // +05:30 and -08:00 must normalize to the same UTC instant as the Z form.
+        let utc = parse_iso_to_epoch_ms("2026-01-15T10:30:00Z").unwrap();
+        assert_eq!(parse_iso_to_epoch_ms("2026-01-15T16:00:00+05:30"), Some(utc));
+        assert_eq!(parse_iso_to_epoch_ms("2026-01-15T02:30:00-08:00"), Some(utc));
+        // Millisecond fraction combined with an offset.
+        let base = parse_iso_to_epoch_ms("2026-01-15T10:30:00.250Z").unwrap();
+        assert_eq!(parse_iso_to_epoch_ms("2026-01-15T11:30:00.250+01:00"), Some(base));
+    }
+
+    #[test]
+    fn read_session_lite_reads_head_and_tail_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"user\",\"message\":{\"content\":\"hello there\"},\"cwd\":\"/ws\"}\n\
+             {\"type\":\"tag\",\"tag\":\"exp\",\"sessionId\":\"s\"}\n",
+        )
+        .unwrap();
+        let lite = read_session_lite(&path).expect("file read");
+        let info = parse_session_info_from_lite("sid", &lite, None).unwrap();
+        assert_eq!(info.summary, "hello there");
+        assert_eq!(info.tag.as_deref(), Some("exp"));
+        assert_eq!(info.cwd.as_deref(), Some("/ws"));
+
+        // A missing file yields None.
+        assert!(read_session_lite(&dir.path().join("nope.jsonl")).is_none());
+    }
 }
