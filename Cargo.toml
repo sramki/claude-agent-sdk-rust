@@ -3,17 +3,18 @@ name = "claude-agent-sdk"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
-description = "Read local Claude Code session history from ~/.claude/projects/**/*.jsonl. A faithful Rust port of the session-reading functionality of Anthropic's claude-agent-sdk (Python)."
+description = "A faithful Rust port of Anthropic's claude-agent-sdk (Python): read local Claude Code session history and drive the `claude` runtime over stream-json."
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/anthropics/claude-agent-sdk-python"
-keywords = ["claude", "sessions", "jsonl", "transcript", "sdk"]
-categories = ["parsing", "filesystem"]
+repository = "https://github.com/sramki/claude-agent-sdk-rust"
+keywords = ["claude", "agent", "sdk", "jsonl", "sessions"]
+categories = ["api-bindings", "parsing", "filesystem"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicode-normalization = "0.1"
+thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"

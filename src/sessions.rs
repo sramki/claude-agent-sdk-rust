@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::chain::{
     entries_to_session_messages, entries_to_subagent_messages, parse_transcript_entries,
 };
+use crate::error::{Error, Result};
 use crate::parse::{parse_session_info_from_lite, read_session_lite};
 use crate::paths::{
     canonicalize_path, find_project_dir, projects_dir, sanitize_path, validate_uuid,
@@ -353,34 +354,43 @@ fn collect_agent_files(base_dir: &Path) -> Vec<(String, PathBuf)> {
 /// for pagination (`limit = Some(0)` returns all, matching the upstream
 /// `limit > 0` check).
 ///
+/// Returns `Ok` with an empty vector when the config directory is missing or
+/// no sessions match — a listing degrades gracefully rather than erroring on a
+/// missing directory or an unreadable individual file.
+///
 /// # Example
 /// ```no_run
 /// use std::path::Path;
-/// let sessions = claude_agent_sdk::list_sessions(Some(Path::new("/path/to/project")), None, 0, true);
+/// let sessions = claude_agent_sdk::list_sessions(Some(Path::new("/path/to/project")), None, 0, true)?;
 /// for s in sessions {
 ///     println!("{}: {}", s.session_id, s.summary);
 /// }
+/// # Ok::<(), claude_agent_sdk::Error>(())
 /// ```
 pub fn list_sessions(
     directory: Option<&Path>,
     limit: Option<usize>,
     offset: usize,
     include_worktrees: bool,
-) -> Vec<SessionInfo> {
-    match directory {
+) -> Result<Vec<SessionInfo>> {
+    Ok(match directory {
         Some(dir) => list_sessions_for_project(dir, limit, offset, include_worktrees),
         None => list_all_sessions(limit, offset),
-    }
+    })
 }
 
 /// Reads metadata for a single session by ID (no O(n) directory scan).
 ///
-/// Returns `None` if the file is not found, `session_id` is not a valid UUID,
-/// the session is a sidechain session, or it has no extractable summary. When
+/// Returns `Ok(None)` if the file is not found, the session is a sidechain
+/// session, or it has no extractable summary. Returns
+/// [`Error::InvalidSessionId`] if `session_id` is not a valid UUID. When
 /// `directory` is omitted, all project directories are searched.
-pub fn get_session_info(session_id: &str, directory: Option<&Path>) -> Option<SessionInfo> {
+pub fn get_session_info(
+    session_id: &str,
+    directory: Option<&Path>,
+) -> Result<Option<SessionInfo>> {
     if !validate_uuid(session_id) {
-        return None;
+        return Err(Error::InvalidSessionId(session_id.to_string()));
     }
     let file_name = format!("{session_id}.jsonl");
 
@@ -389,7 +399,7 @@ pub fn get_session_info(session_id: &str, directory: Option<&Path>) -> Option<Se
 
         if let Some(project_dir) = find_project_dir(&canonical) {
             if let Some(lite) = read_session_lite(&project_dir.join(&file_name)) {
-                return parse_session_info_from_lite(session_id, &lite, Some(&canonical));
+                return Ok(parse_session_info_from_lite(session_id, &lite, Some(&canonical)));
             }
         }
 
@@ -399,84 +409,91 @@ pub fn get_session_info(session_id: &str, directory: Option<&Path>) -> Option<Se
             }
             if let Some(wt_project_dir) = find_project_dir(&wt) {
                 if let Some(lite) = read_session_lite(&wt_project_dir.join(&file_name)) {
-                    return parse_session_info_from_lite(session_id, &lite, Some(&wt));
+                    return Ok(parse_session_info_from_lite(session_id, &lite, Some(&wt)));
                 }
             }
         }
-        return None;
+        return Ok(None);
     }
 
     // No directory — search all project directories for the file.
-    let entries = std::fs::read_dir(projects_dir()).ok()?;
+    let entries = match std::fs::read_dir(projects_dir()) {
+        Ok(e) => e,
+        Err(_) => return Ok(None),
+    };
     for entry in entries.flatten() {
         if let Some(lite) = read_session_lite(&entry.path().join(&file_name)) {
-            return parse_session_info_from_lite(session_id, &lite, None);
+            return Ok(parse_session_info_from_lite(session_id, &lite, None));
         }
     }
-    None
+    Ok(None)
 }
 
 /// Reads a session's conversation messages from its JSONL transcript.
 ///
 /// Parses the full JSONL, builds the conversation chain via `parentUuid` links,
-/// and returns user/assistant messages in chronological order. Returns an empty
-/// vector if the session is not found, `session_id` is invalid, or there are no
-/// visible messages. When `directory` is omitted, all project directories are
-/// searched.
+/// and returns user/assistant messages in chronological order. Returns
+/// `Ok(vec![])` if the session is not found or there are no visible messages,
+/// and [`Error::InvalidSessionId`] if `session_id` is invalid. When `directory`
+/// is omitted, all project directories are searched.
 pub fn get_session_messages(
     session_id: &str,
     directory: Option<&Path>,
     limit: Option<usize>,
     offset: usize,
-) -> Vec<SessionMessage> {
+) -> Result<Vec<SessionMessage>> {
     if !validate_uuid(session_id) {
-        return Vec::new();
+        return Err(Error::InvalidSessionId(session_id.to_string()));
     }
     let content = match read_session_file(session_id, directory) {
         Some(c) => c,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
     let entries = parse_transcript_entries(&content);
-    entries_to_session_messages(&entries, limit, offset)
+    Ok(entries_to_session_messages(&entries, limit, offset))
 }
 
 /// Lists subagent IDs for a session by scanning its `subagents/` directory
 /// (recursively, including nested `workflows/<runId>/`).
 ///
-/// Returns an empty vector if the session is not found, `session_id` is
-/// invalid, or the session has no subagents.
-pub fn list_subagents(session_id: &str, directory: Option<&Path>) -> Vec<String> {
+/// Returns `Ok(vec![])` if the session is not found or has no subagents, and
+/// [`Error::InvalidSessionId`] if `session_id` is invalid.
+pub fn list_subagents(session_id: &str, directory: Option<&Path>) -> Result<Vec<String>> {
     if !validate_uuid(session_id) {
-        return Vec::new();
+        return Err(Error::InvalidSessionId(session_id.to_string()));
     }
     let subagents_dir = match resolve_subagents_dir(session_id, directory) {
         Some(d) => d,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
-    collect_agent_files(&subagents_dir)
+    Ok(collect_agent_files(&subagents_dir)
         .into_iter()
         .map(|(id, _)| id)
-        .collect()
+        .collect())
 }
 
 /// Reads a subagent's conversation messages from its JSONL transcript.
 ///
 /// The agent file may live directly in `subagents/` or in a nested
-/// subdirectory. Returns an empty vector if the session/subagent is not found,
-/// `session_id` is invalid, or `agent_id` is empty.
+/// subdirectory. Returns `Ok(vec![])` if the session/subagent is not found,
+/// [`Error::InvalidSessionId`] if `session_id` is invalid, and
+/// [`Error::InvalidAgentId`] if `agent_id` is empty.
 pub fn get_subagent_messages(
     session_id: &str,
     agent_id: &str,
     directory: Option<&Path>,
     limit: Option<usize>,
     offset: usize,
-) -> Vec<SessionMessage> {
-    if !validate_uuid(session_id) || agent_id.is_empty() {
-        return Vec::new();
+) -> Result<Vec<SessionMessage>> {
+    if !validate_uuid(session_id) {
+        return Err(Error::InvalidSessionId(session_id.to_string()));
+    }
+    if agent_id.is_empty() {
+        return Err(Error::InvalidAgentId);
     }
     let subagents_dir = match resolve_subagents_dir(session_id, directory) {
         Some(d) => d,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
 
     let matched = collect_agent_files(&subagents_dir)
@@ -486,13 +503,13 @@ pub fn get_subagent_messages(
 
     let path = match matched {
         Some(p) => p,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
 
     let content = match std::fs::read_to_string(&path) {
         Ok(c) if !c.is_empty() => c,
-        _ => return Vec::new(),
+        _ => return Ok(Vec::new()),
     };
     let entries = parse_transcript_entries(&content);
-    entries_to_subagent_messages(&entries, limit, offset)
+    Ok(entries_to_subagent_messages(&entries, limit, offset))
 }

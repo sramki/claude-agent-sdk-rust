@@ -8,11 +8,11 @@ use std::path::Path;
 
 use claude_agent_sdk::list_sessions;
 
-fn main() {
+fn main() -> Result<(), claude_agent_sdk::Error> {
     let arg = std::env::args().nth(1);
     let dir = arg.as_deref().map(Path::new);
 
-    let sessions = list_sessions(dir, Some(20), 0, true);
+    let sessions = list_sessions(dir, Some(20), 0, true)?;
     println!("{} session(s):", sessions.len());
     for s in sessions {
         let branch = s.git_branch.as_deref().unwrap_or("-");
@@ -23,4 +23,5 @@ fn main() {
             s.summary.chars().take(70).collect::<String>()
         );
     }
+    Ok(())
 }
