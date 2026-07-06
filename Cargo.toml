@@ -23,3 +23,5 @@ futures-core = "0.3"
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync", "io-util"] }
+tokio-stream = "0.1"
+async-trait = "0.1"
