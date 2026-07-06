@@ -19,9 +19,19 @@ load-bearing:
 ## Current state (2026-07-06)
 
 Faithful to **Anthropic's Python SDK v0.2.110**. Idiomatic Rust (`Result`, serde enums, tokio async,
-`Arc`-wrapped callbacks). **177 tests** (97 unit + 80 integration/runtime/mutations + 2 doctests),
-`cargo clippy -D warnings` clean. **MIT**; on GitHub at `sramki/claude-agent-sdk-rust` (branch
-`feat/full-parity`).
+`Arc`-wrapped callbacks). **~388 tests** (unit + ported-upstream parity suites + mock-transport runtime
++ live-CLI + doctests), `cargo clippy -D warnings` clean. Published as `claude-agent-sdk-rs`, imported
+as `claude_agent_sdk_rs`. **MIT**; GitHub `sramki/claude-agent-sdk-rust`.
+
+Fidelity fixes done (former "bucket B"): transport `close()` graceful terminate→SIGTERM→SIGKILL
+escalation, unix atexit orphan-reaper, `Options.user` uid, stderr-callback panic isolation, full
+`Cf`/`Co`/`Cn` unicode strip, `AssistantMessageError` unknown-fallback, once-per-process shadow warning,
+truncated-final-line drop via `read_until` framing.
+
+Test parity done (former "bucket C") for the ported code: Rust ports of upstream `test_message_parser`,
+`test_types`, `test_errors`, `test_rate_limit_event_repro`, `test_session_summary`, `test_session_mutations`
+(local), `test_transport` (build_command), `test_subprocess_buffering`, `test_option_warnings` — no
+behavioral discrepancies found. Store-layer test files map to the remaining bucket-A work below.
 
 **DONE:**
 - **Session reader** (`sessions`) — refactored to `Result` (invalid input → `Err`; missing → `Ok`).
