@@ -53,6 +53,7 @@
 
 mod chain;
 mod error;
+pub mod mcp;
 mod parse;
 mod paths;
 pub mod runtime;
@@ -60,6 +61,7 @@ mod sessions;
 pub mod types;
 
 pub use error::{Error, Result};
+pub use mcp::{create_sdk_mcp_server, tool, SdkMcpTool, ToolAnnotations};
 pub use runtime::{
     query, query_with_transport, parse_message, Client, MessageStream, Prompt,
     SubprocessCliTransport, Transport,
