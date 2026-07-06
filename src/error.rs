@@ -73,6 +73,11 @@ pub enum Error {
         data: Option<serde_json::Value>,
     },
 
+    /// An optional capability was invoked on a backend that does not provide
+    /// it (e.g. a `SessionStore` adapter that only implements `append`/`load`).
+    #[error("unsupported operation: {0}")]
+    Unsupported(&'static str),
+
     /// An underlying I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),

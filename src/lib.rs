@@ -56,10 +56,10 @@ mod error;
 mod parse;
 mod paths;
 mod sessions;
-mod types;
+pub mod types;
 
 pub use error::{Error, Result};
 pub use sessions::{
     get_session_info, get_session_messages, get_subagent_messages, list_sessions, list_subagents,
 };
-pub use types::{MessageType, SessionInfo, SessionMessage};
+pub use types::*;
