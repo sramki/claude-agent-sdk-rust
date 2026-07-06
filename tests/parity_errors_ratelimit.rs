@@ -37,7 +37,10 @@ fn cli_not_found_error() {
 
     // With a path — Rust-specific formatting the upstream Display also uses.
     let e = Error::cli_not_found(Some("/usr/local/bin/claude"));
-    assert_eq!(e.to_string(), "Claude Code not found: /usr/local/bin/claude");
+    assert_eq!(
+        e.to_string(),
+        "Claude Code not found: /usr/local/bin/claude"
+    );
     match e {
         Error::CliNotFound { cli_path, .. } => {
             assert_eq!(cli_path.as_deref(), Some("/usr/local/bin/claude"));
@@ -58,9 +61,15 @@ fn connection_error() {
 /// and that all three fragments appear in Display.
 #[test]
 fn process_error_with_code_and_stderr() {
-    let e = Error::process("Process failed", Some(1), Some("Command not found".to_string()));
+    let e = Error::process(
+        "Process failed",
+        Some(1),
+        Some("Command not found".to_string()),
+    );
     match &e {
-        Error::Process { exit_code, stderr, .. } => {
+        Error::Process {
+            exit_code, stderr, ..
+        } => {
             assert_eq!(*exit_code, Some(1));
             assert_eq!(stderr.as_deref(), Some("Command not found"));
         }
@@ -71,7 +80,10 @@ fn process_error_with_code_and_stderr() {
     assert!(msg.contains("exit code: 1"));
     assert!(msg.contains("Command not found"));
     // Exact upstream format string.
-    assert_eq!(msg, "Process failed (exit code: 1)\nError output: Command not found");
+    assert_eq!(
+        msg,
+        "Process failed (exit code: 1)\nError output: Command not found"
+    );
 }
 
 /// Complementary: a ProcessError with no optional fields is just the message.
@@ -183,7 +195,10 @@ fn rate_limit_event_rejected_parsed() {
     assert_eq!(info.status, RateLimitStatus::Rejected);
     assert_eq!(info.rate_limit_type, Some(RateLimitType::SevenDay));
     assert_eq!(info.overage_status, Some(RateLimitStatus::Rejected));
-    assert_eq!(info.overage_disabled_reason.as_deref(), Some("out_of_credits"));
+    assert_eq!(
+        info.overage_disabled_reason.as_deref(),
+        Some("out_of_credits")
+    );
 }
 
 /// Ported from `test_rate_limit_event_minimal_fields`. Only `status` is

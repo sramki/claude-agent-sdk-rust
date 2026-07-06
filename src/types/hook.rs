@@ -348,7 +348,10 @@ mod tests {
             stop_reason: Some("stop".into()),
             ..Default::default()
         };
-        assert_eq!(out.to_wire(), json!({"continue": false, "stopReason": "stop"}));
+        assert_eq!(
+            out.to_wire(),
+            json!({"continue": false, "stopReason": "stop"})
+        );
     }
 
     #[test]

@@ -78,20 +78,21 @@ struct SessionOpts<'a> {
 
 fn set_mtime(path: &Path, secs: u64) {
     let f = fs::File::options().write(true).open(path).unwrap();
-    f.set_modified(UNIX_EPOCH + Duration::from_secs(secs)).unwrap();
+    f.set_modified(UNIX_EPOCH + Duration::from_secs(secs))
+        .unwrap();
 }
 
 /// Mirrors `_make_session_file`. Returns the session id.
 fn make_session_file(project_dir: &Path, opts: SessionOpts) -> String {
-    let sid = opts
-        .session_id
-        .map(str::to_string)
-        .unwrap_or_else(new_uuid);
+    let sid = opts.session_id.map(str::to_string).unwrap_or_else(new_uuid);
     let first_prompt = opts.first_prompt.unwrap_or("Hello Claude");
 
     let mut first = Map::new();
     first.insert("type".into(), json!("user"));
-    first.insert("message".into(), json!({"role": "user", "content": first_prompt}));
+    first.insert(
+        "message".into(),
+        json!({"role": "user", "content": first_prompt}),
+    );
     if let Some(cwd) = opts.cwd {
         first.insert("cwd".into(), json!(cwd));
     }
@@ -105,7 +106,8 @@ fn make_session_file(project_dir: &Path, opts: SessionOpts) -> String {
         first.insert("isMeta".into(), json!(true));
     }
 
-    let assistant = json!({"type": "assistant", "message": {"role": "assistant", "content": "Hi there!"}});
+    let assistant =
+        json!({"type": "assistant", "message": {"role": "assistant", "content": "Hi there!"}});
 
     let mut tail = Map::new();
     tail.insert("type".into(), json!("summary"));
@@ -136,8 +138,8 @@ fn make_session_file(project_dir: &Path, opts: SessionOpts) -> String {
 
 /// A random-enough UUID (no external crate). Format `8-4-4-4-12` hex.
 fn new_uuid() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH as EPOCH};
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH as EPOCH};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now().duration_since(EPOCH).unwrap().as_nanos() as u64;
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -168,7 +170,11 @@ fn tentry(t: &str, uuid: &str, parent: Option<&str>, sid: &str, content: Option<
     );
     o.insert("sessionId".into(), json!(sid));
     if let Some(c) = content {
-        let role = if t == "user" || t == "assistant" { t } else { "user" };
+        let role = if t == "user" || t == "assistant" {
+            t
+        } else {
+            "user"
+        };
         o.insert("message".into(), json!({"role": role, "content": c}));
     }
     Value::Object(o)
@@ -267,7 +273,10 @@ fn custom_title_wins_summary() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].summary, "My Custom Title");
     assert_eq!(sessions[0].custom_title.as_deref(), Some("My Custom Title"));
-    assert_eq!(sessions[0].first_prompt.as_deref(), Some("original question"));
+    assert_eq!(
+        sessions[0].first_prompt.as_deref(),
+        Some("original question")
+    );
 }
 
 #[test]
@@ -301,14 +310,38 @@ fn multiple_sessions_sorted_by_mtime() {
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
 
-    let sid_old = make_session_file(&pd, SessionOpts { first_prompt: Some("old"), mtime: Some(1000), ..Default::default() });
-    let sid_new = make_session_file(&pd, SessionOpts { first_prompt: Some("new"), mtime: Some(3000), ..Default::default() });
-    let sid_mid = make_session_file(&pd, SessionOpts { first_prompt: Some("mid"), mtime: Some(2000), ..Default::default() });
+    let sid_old = make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("old"),
+            mtime: Some(1000),
+            ..Default::default()
+        },
+    );
+    let sid_new = make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("new"),
+            mtime: Some(3000),
+            ..Default::default()
+        },
+    );
+    let sid_mid = make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("mid"),
+            mtime: Some(2000),
+            ..Default::default()
+        },
+    );
 
     let sessions = list_sessions(Some(&project_path), None, 0, false).unwrap();
     assert_eq!(sessions.len(), 3);
     assert_eq!(
-        sessions.iter().map(|s| s.session_id.clone()).collect::<Vec<_>>(),
+        sessions
+            .iter()
+            .map(|s| s.session_id.clone())
+            .collect::<Vec<_>>(),
         vec![sid_new, sid_mid, sid_old]
     );
     assert_eq!(sessions[0].last_modified, 3_000_000);
@@ -325,7 +358,14 @@ fn limit_restricts() {
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
     for i in 0..5 {
-        make_session_file(&pd, SessionOpts { first_prompt: Some("p"), mtime: Some(1000 + i), ..Default::default() });
+        make_session_file(
+            &pd,
+            SessionOpts {
+                first_prompt: Some("p"),
+                mtime: Some(1000 + i),
+                ..Default::default()
+            },
+        );
     }
     let sessions = list_sessions(Some(&project_path), Some(2), 0, false).unwrap();
     assert_eq!(sessions.len(), 2);
@@ -341,7 +381,14 @@ fn offset_pagination() {
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
     for i in 0..5 {
-        make_session_file(&pd, SessionOpts { first_prompt: Some("p"), mtime: Some(1000 + i), ..Default::default() });
+        make_session_file(
+            &pd,
+            SessionOpts {
+                first_prompt: Some("p"),
+                mtime: Some(1000 + i),
+                ..Default::default()
+            },
+        );
     }
     let page1 = list_sessions(Some(&project_path), Some(2), 0, false).unwrap();
     let page2 = list_sessions(Some(&project_path), Some(2), 2, false).unwrap();
@@ -351,7 +398,9 @@ fn offset_pagination() {
     let p2: std::collections::HashSet<_> = page2.iter().map(|s| &s.session_id).collect();
     assert!(p1.is_disjoint(&p2));
     assert!(page1[0].last_modified > page2[0].last_modified);
-    assert!(list_sessions(Some(&project_path), None, 100, false).unwrap().is_empty());
+    assert!(list_sessions(Some(&project_path), None, 100, false)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -362,8 +411,21 @@ fn filters_sidechain_sessions() {
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
-    make_session_file(&pd, SessionOpts { first_prompt: Some("normal"), ..Default::default() });
-    make_session_file(&pd, SessionOpts { first_prompt: Some("sidechain"), is_sidechain: true, ..Default::default() });
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("normal"),
+            ..Default::default()
+        },
+    );
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("sidechain"),
+            is_sidechain: true,
+            ..Default::default()
+        },
+    );
 
     let sessions = list_sessions(Some(&project_path), None, 0, false).unwrap();
     assert_eq!(sessions.len(), 1);
@@ -378,8 +440,21 @@ fn filters_empty_sessions() {
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
-    make_session_file(&pd, SessionOpts { first_prompt: Some("ignored meta"), is_meta_only: true, ..Default::default() });
-    make_session_file(&pd, SessionOpts { first_prompt: Some("real content"), ..Default::default() });
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("ignored meta"),
+            is_meta_only: true,
+            ..Default::default()
+        },
+    );
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("real content"),
+            ..Default::default()
+        },
+    );
 
     let sessions = list_sessions(Some(&project_path), None, 0, false).unwrap();
     assert_eq!(sessions.len(), 1);
@@ -399,7 +474,13 @@ fn filters_non_uuid_filenames() {
         "{\"type\":\"user\",\"message\":{\"content\":\"x\"}}\n",
     )
     .unwrap();
-    make_session_file(&pd, SessionOpts { first_prompt: Some("valid session"), ..Default::default() });
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("valid session"),
+            ..Default::default()
+        },
+    );
 
     let sessions = list_sessions(Some(&project_path), None, 0, false).unwrap();
     assert_eq!(sessions.len(), 1);
@@ -415,9 +496,20 @@ fn ignores_non_jsonl_files() {
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
     fs::write(pd.join("README.md"), "not a session").unwrap();
-    make_session_file(&pd, SessionOpts { first_prompt: Some("session"), ..Default::default() });
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("session"),
+            ..Default::default()
+        },
+    );
 
-    assert_eq!(list_sessions(Some(&project_path), None, 0, false).unwrap().len(), 1);
+    assert_eq!(
+        list_sessions(Some(&project_path), None, 0, false)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -426,8 +518,22 @@ fn list_all_sessions() {
     let c = claude_config_dir();
     let p1 = make_project_dir(&c, "/some/path/one");
     let p2 = make_project_dir(&c, "/some/path/two");
-    make_session_file(&p1, SessionOpts { first_prompt: Some("from proj1"), mtime: Some(1000), ..Default::default() });
-    make_session_file(&p2, SessionOpts { first_prompt: Some("from proj2"), mtime: Some(2000), ..Default::default() });
+    make_session_file(
+        &p1,
+        SessionOpts {
+            first_prompt: Some("from proj1"),
+            mtime: Some(1000),
+            ..Default::default()
+        },
+    );
+    make_session_file(
+        &p2,
+        SessionOpts {
+            first_prompt: Some("from proj2"),
+            mtime: Some(2000),
+            ..Default::default()
+        },
+    );
 
     let sessions = list_sessions(None, None, 0, true).unwrap();
     assert_eq!(sessions.len(), 2);
@@ -442,8 +548,24 @@ fn list_all_sessions_dedupes() {
     let p1 = make_project_dir(&c, "/path/one");
     let p2 = make_project_dir(&c, "/path/two");
     let shared = new_uuid();
-    make_session_file(&p1, SessionOpts { session_id: Some(&shared), first_prompt: Some("older"), mtime: Some(1000), ..Default::default() });
-    make_session_file(&p2, SessionOpts { session_id: Some(&shared), first_prompt: Some("newer"), mtime: Some(2000), ..Default::default() });
+    make_session_file(
+        &p1,
+        SessionOpts {
+            session_id: Some(&shared),
+            first_prompt: Some("older"),
+            mtime: Some(1000),
+            ..Default::default()
+        },
+    );
+    make_session_file(
+        &p2,
+        SessionOpts {
+            session_id: Some(&shared),
+            first_prompt: Some("newer"),
+            mtime: Some(2000),
+            ..Default::default()
+        },
+    );
 
     let sessions = list_sessions(None, None, 0, true).unwrap();
     assert_eq!(sessions.len(), 1);
@@ -458,7 +580,9 @@ fn nonexistent_project_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let project_path = tmp.path().join("never-used");
     fs::create_dir_all(&project_path).unwrap();
-    assert!(list_sessions(Some(&project_path), None, 0, false).unwrap().is_empty());
+    assert!(list_sessions(Some(&project_path), None, 0, false)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -470,7 +594,9 @@ fn empty_file_filtered() {
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
     fs::write(pd.join(format!("{}.jsonl", new_uuid())), "").unwrap();
-    assert!(list_sessions(Some(&project_path), None, 0, false).unwrap().is_empty());
+    assert!(list_sessions(Some(&project_path), None, 0, false)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -482,9 +608,21 @@ fn include_worktrees_disabled() {
     fs::create_dir_all(&project_path).unwrap();
     let canonical = realpath(&project_path);
     let main_dir = make_project_dir(&c, &canonical);
-    make_session_file(&main_dir, SessionOpts { first_prompt: Some("main session"), ..Default::default() });
+    make_session_file(
+        &main_dir,
+        SessionOpts {
+            first_prompt: Some("main session"),
+            ..Default::default()
+        },
+    );
     let other_dir = make_project_dir(&c, &format!("{canonical}-worktree"));
-    make_session_file(&other_dir, SessionOpts { first_prompt: Some("worktree session"), ..Default::default() });
+    make_session_file(
+        &other_dir,
+        SessionOpts {
+            first_prompt: Some("worktree session"),
+            ..Default::default()
+        },
+    );
 
     let sessions = list_sessions(Some(&project_path), None, 0, false).unwrap();
     assert_eq!(sessions.len(), 1);
@@ -500,9 +638,20 @@ fn limit_zero_returns_all() {
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
     for _ in 0..3 {
-        make_session_file(&pd, SessionOpts { first_prompt: Some("p"), ..Default::default() });
+        make_session_file(
+            &pd,
+            SessionOpts {
+                first_prompt: Some("p"),
+                ..Default::default()
+            },
+        );
     }
-    assert_eq!(list_sessions(Some(&project_path), Some(0), 0, false).unwrap().len(), 3);
+    assert_eq!(
+        list_sessions(Some(&project_path), Some(0), 0, false)
+            .unwrap()
+            .len(),
+        3
+    );
 }
 
 #[test]
@@ -514,7 +663,13 @@ fn cwd_from_head_fallback_to_project_path() {
     fs::create_dir_all(&project_path).unwrap();
     let canonical = realpath(&project_path);
     let pd = make_project_dir(&c, &canonical);
-    make_session_file(&pd, SessionOpts { first_prompt: Some("no cwd field"), ..Default::default() });
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("no cwd field"),
+            ..Default::default()
+        },
+    );
 
     let sessions = list_sessions(Some(&project_path), None, 0, false).unwrap();
     assert_eq!(sessions[0].cwd.as_deref(), Some(canonical.as_str()));
@@ -529,7 +684,8 @@ fn git_branch_from_tail_preferred() {
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
     let sid = new_uuid();
-    let body = "{\"type\":\"user\",\"message\":{\"content\":\"hello\"},\"gitBranch\":\"old-branch\"}\n\
+    let body =
+        "{\"type\":\"user\",\"message\":{\"content\":\"hello\"},\"gitBranch\":\"old-branch\"}\n\
          {\"type\":\"summary\",\"gitBranch\":\"new-branch\"}\n";
     fs::write(pd.join(format!("{sid}.jsonl")), body).unwrap();
 
@@ -620,7 +776,13 @@ fn tag_absent() {
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
-    make_session_file(&pd, SessionOpts { first_prompt: Some("hello"), ..Default::default() });
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("hello"),
+            ..Default::default()
+        },
+    );
     let sessions = list_sessions(Some(&project_path), None, 0, false).unwrap();
     assert_eq!(sessions[0].tag, None);
 }
@@ -744,7 +906,13 @@ fn created_at_none_when_missing() {
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
-    make_session_file(&pd, SessionOpts { first_prompt: Some("no timestamp"), ..Default::default() });
+    make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("no timestamp"),
+            ..Default::default()
+        },
+    );
     let sessions = list_sessions(Some(&project_path), None, 0, false).unwrap();
     assert_eq!(sessions[0].created_at, None);
 }
@@ -765,7 +933,9 @@ fn messages_invalid_session_id() {
 fn messages_nonexistent_session() {
     let _g = env_guard!();
     let _c = claude_config_dir();
-    assert!(get_session_messages(&new_uuid(), None, None, 0).unwrap().is_empty());
+    assert!(get_session_messages(&new_uuid(), None, None, 0)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -773,7 +943,9 @@ fn messages_no_config_dir() {
     let _g = env_guard!();
     let tmp = tempfile::tempdir().unwrap();
     std::env::set_var("CLAUDE_CONFIG_DIR", tmp.path().join("nonexistent"));
-    assert!(get_session_messages(&new_uuid(), None, None, 0).unwrap().is_empty());
+    assert!(get_session_messages(&new_uuid(), None, None, 0)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -818,7 +990,11 @@ fn messages_filters_meta() {
     let (u1, meta, a1) = (new_uuid(), new_uuid(), new_uuid());
     let entries = vec![
         tentry("user", &u1, None, &sid, Some(json!("hello"))),
-        with(tentry("user", &meta, Some(&u1), &sid, Some(json!("meta"))), "isMeta", json!(true)),
+        with(
+            tentry("user", &meta, Some(&u1), &sid, Some(json!("meta"))),
+            "isMeta",
+            json!(true),
+        ),
         tentry("assistant", &a1, Some(&meta), &sid, Some(json!("hi"))),
     ];
     write_transcript(&pd, &sid, &entries);
@@ -858,7 +1034,11 @@ fn messages_keeps_compact_summary() {
     let sid = new_uuid();
     let (u1, a1) = (new_uuid(), new_uuid());
     let entries = vec![
-        with(tentry("user", &u1, None, &sid, Some(json!("compact summary"))), "isCompactSummary", json!(true)),
+        with(
+            tentry("user", &u1, None, &sid, Some(json!("compact summary"))),
+            "isCompactSummary",
+            json!(true),
+        ),
         tentry("assistant", &a1, Some(&u1), &sid, Some(json!("hi"))),
     ];
     write_transcript(&pd, &sid, &entries);
@@ -881,22 +1061,38 @@ fn messages_limit_and_offset() {
         .iter()
         .enumerate()
         .map(|(i, uid)| {
-            let parent = if i > 0 { Some(us[i - 1].as_str()) } else { None };
+            let parent = if i > 0 {
+                Some(us[i - 1].as_str())
+            } else {
+                None
+            };
             let t = if i % 2 == 0 { "user" } else { "assistant" };
             tentry(t, uid, parent, &sid, Some(json!(format!("m{i}"))))
         })
         .collect();
     write_transcript(&pd, &sid, &entries);
 
-    assert_eq!(get_session_messages(&sid, Some(&project_path), None, 0).unwrap().len(), 6);
+    assert_eq!(
+        get_session_messages(&sid, Some(&project_path), None, 0)
+            .unwrap()
+            .len(),
+        6
+    );
     let page = get_session_messages(&sid, Some(&project_path), Some(2), 0).unwrap();
     assert_eq!(ids(&page), vec![us[0].clone(), us[1].clone()]);
     let page = get_session_messages(&sid, Some(&project_path), Some(2), 2).unwrap();
     assert_eq!(ids(&page), vec![us[2].clone(), us[3].clone()]);
     let page = get_session_messages(&sid, Some(&project_path), None, 4).unwrap();
     assert_eq!(ids(&page), vec![us[4].clone(), us[5].clone()]);
-    assert_eq!(get_session_messages(&sid, Some(&project_path), Some(0), 0).unwrap().len(), 6);
-    assert!(get_session_messages(&sid, Some(&project_path), None, 100).unwrap().is_empty());
+    assert_eq!(
+        get_session_messages(&sid, Some(&project_path), Some(0), 0)
+            .unwrap()
+            .len(),
+        6
+    );
+    assert!(get_session_messages(&sid, Some(&project_path), None, 100)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -911,8 +1107,24 @@ fn messages_picks_main_over_sidechain() {
     let (root, main_leaf, side_leaf) = (new_uuid(), new_uuid(), new_uuid());
     let entries = vec![
         tentry("user", &root, None, &sid, Some(json!("root"))),
-        tentry("assistant", &main_leaf, Some(&root), &sid, Some(json!("main"))),
-        with(tentry("assistant", &side_leaf, Some(&root), &sid, Some(json!("side"))), "isSidechain", json!(true)),
+        tentry(
+            "assistant",
+            &main_leaf,
+            Some(&root),
+            &sid,
+            Some(json!("main")),
+        ),
+        with(
+            tentry(
+                "assistant",
+                &side_leaf,
+                Some(&root),
+                &sid,
+                Some(json!("side")),
+            ),
+            "isSidechain",
+            json!(true),
+        ),
     ];
     write_transcript(&pd, &sid, &entries);
     let msgs = get_session_messages(&sid, Some(&project_path), None, 0).unwrap();
@@ -931,8 +1143,20 @@ fn messages_picks_latest_leaf_by_position() {
     let (root, old_leaf, new_leaf) = (new_uuid(), new_uuid(), new_uuid());
     let entries = vec![
         tentry("user", &root, None, &sid, Some(json!("root"))),
-        tentry("assistant", &old_leaf, Some(&root), &sid, Some(json!("old"))),
-        tentry("assistant", &new_leaf, Some(&root), &sid, Some(json!("new"))),
+        tentry(
+            "assistant",
+            &old_leaf,
+            Some(&root),
+            &sid,
+            Some(json!("old")),
+        ),
+        tentry(
+            "assistant",
+            &new_leaf,
+            Some(&root),
+            &sid,
+            Some(json!("new")),
+        ),
     ];
     write_transcript(&pd, &sid, &entries);
     let msgs = get_session_messages(&sid, Some(&project_path), None, 0).unwrap();
@@ -1012,7 +1236,9 @@ fn messages_cycle_detection() {
         tentry("assistant", &a1, Some(&u1), &sid, Some(json!("hello"))),
     ];
     write_transcript(&pd, &sid, &entries);
-    assert!(get_session_messages(&sid, Some(&project_path), None, 0).unwrap().is_empty());
+    assert!(get_session_messages(&sid, Some(&project_path), None, 0)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -1025,7 +1251,9 @@ fn messages_empty_transcript_file() {
     let pd = make_project_dir(&c, &realpath(&project_path));
     let sid = new_uuid();
     fs::write(pd.join(format!("{sid}.jsonl")), "").unwrap();
-    assert!(get_session_messages(&sid, Some(&project_path), None, 0).unwrap().is_empty());
+    assert!(get_session_messages(&sid, Some(&project_path), None, 0)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -1045,7 +1273,12 @@ fn messages_ignores_non_transcript_types() {
         tentry("assistant", &a1, Some(&u1), &sid, Some(json!("hello")))
     );
     fs::write(pd.join(format!("{sid}.jsonl")), body).unwrap();
-    assert_eq!(get_session_messages(&sid, Some(&project_path), None, 0).unwrap().len(), 2);
+    assert_eq!(
+        get_session_messages(&sid, Some(&project_path), None, 0)
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,9 +1316,18 @@ fn info_found_with_directory() {
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
-    let sid = make_session_file(&pd, SessionOpts { first_prompt: Some("hello"), git_branch: Some("main"), ..Default::default() });
+    let sid = make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("hello"),
+            git_branch: Some("main"),
+            ..Default::default()
+        },
+    );
 
-    let info = get_session_info(&sid, Some(&project_path)).unwrap().unwrap();
+    let info = get_session_info(&sid, Some(&project_path))
+        .unwrap()
+        .unwrap();
     assert_eq!(info.session_id, sid);
     assert_eq!(info.summary, "hello");
     assert_eq!(info.git_branch.as_deref(), Some("main"));
@@ -1096,7 +1338,13 @@ fn info_found_without_directory() {
     let _g = env_guard!();
     let c = claude_config_dir();
     let pd = make_project_dir(&c, "/some/project");
-    let sid = make_session_file(&pd, SessionOpts { first_prompt: Some("search all"), ..Default::default() });
+    let sid = make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("search all"),
+            ..Default::default()
+        },
+    );
     let info = get_session_info(&sid, None).unwrap().unwrap();
     assert_eq!(info.session_id, sid);
     assert_eq!(info.summary, "search all");
@@ -1110,8 +1358,17 @@ fn info_returns_none_for_sidechain() {
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
-    let sid = make_session_file(&pd, SessionOpts { first_prompt: Some("sidechain"), is_sidechain: true, ..Default::default() });
-    assert!(get_session_info(&sid, Some(&project_path)).unwrap().is_none());
+    let sid = make_session_file(
+        &pd,
+        SessionOpts {
+            first_prompt: Some("sidechain"),
+            is_sidechain: true,
+            ..Default::default()
+        },
+    );
+    assert!(get_session_info(&sid, Some(&project_path))
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -1125,7 +1382,13 @@ fn info_directory_not_containing_session() {
     fs::create_dir_all(&project_b).unwrap();
     let dir_a = make_project_dir(&c, &realpath(&project_a));
     make_project_dir(&c, &realpath(&project_b));
-    let sid = make_session_file(&dir_a, SessionOpts { first_prompt: Some("in A only"), ..Default::default() });
+    let sid = make_session_file(
+        &dir_a,
+        SessionOpts {
+            first_prompt: Some("in A only"),
+            ..Default::default()
+        },
+    );
 
     assert!(get_session_info(&sid, Some(&project_b)).unwrap().is_none());
     assert!(get_session_info(&sid, None).unwrap().is_some());
@@ -1148,7 +1411,9 @@ fn info_includes_tag() {
             &format!("{{\"type\":\"tag\",\"tag\":\"urgent\",\"sessionId\":\"{sid}\"}}"),
         ],
     );
-    let info = get_session_info(&sid, Some(&project_path)).unwrap().unwrap();
+    let info = get_session_info(&sid, Some(&project_path))
+        .unwrap()
+        .unwrap();
     assert_eq!(info.tag.as_deref(), Some("urgent"));
 }
 
@@ -1200,7 +1465,9 @@ fn subagents_session_exists_no_dir() {
     fs::create_dir_all(&project_path).unwrap();
     let pd = make_project_dir(&c, &realpath(&project_path));
     let sid = make_session_file(&pd, SessionOpts::default());
-    assert!(list_subagents(&sid, Some(&project_path)).unwrap().is_empty());
+    assert!(list_subagents(&sid, Some(&project_path))
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -1211,7 +1478,9 @@ fn subagents_empty_dir() {
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
     let (sid, _) = make_session_with_subagents(&c, project_path.to_str().unwrap(), &[]);
-    assert!(list_subagents(&sid, Some(&project_path)).unwrap().is_empty());
+    assert!(list_subagents(&sid, Some(&project_path))
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -1221,7 +1490,8 @@ fn subagents_happy_path() {
     let tmp = tempfile::tempdir().unwrap();
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
-    let (sid, _) = make_session_with_subagents(&c, project_path.to_str().unwrap(), &["abc123", "def456"]);
+    let (sid, _) =
+        make_session_with_subagents(&c, project_path.to_str().unwrap(), &["abc123", "def456"]);
     let mut result = list_subagents(&sid, Some(&project_path)).unwrap();
     result.sort();
     assert_eq!(result, vec!["abc123", "def456"]);
@@ -1234,11 +1504,15 @@ fn subagents_ignores_non_agent_files() {
     let tmp = tempfile::tempdir().unwrap();
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
-    let (sid, subagents) = make_session_with_subagents(&c, project_path.to_str().unwrap(), &["keep"]);
+    let (sid, subagents) =
+        make_session_with_subagents(&c, project_path.to_str().unwrap(), &["keep"]);
     fs::write(subagents.join("agent-keep.meta.json"), "{}").unwrap();
     fs::write(subagents.join("other.jsonl"), "{}\n").unwrap();
     fs::write(subagents.join("agent-noext"), "{}").unwrap();
-    assert_eq!(list_subagents(&sid, Some(&project_path)).unwrap(), vec!["keep"]);
+    assert_eq!(
+        list_subagents(&sid, Some(&project_path)).unwrap(),
+        vec!["keep"]
+    );
 }
 
 #[test]
@@ -1248,7 +1522,8 @@ fn subagents_recurses_into_subdirectories() {
     let tmp = tempfile::tempdir().unwrap();
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
-    let (sid, subagents) = make_session_with_subagents(&c, project_path.to_str().unwrap(), &["top"]);
+    let (sid, subagents) =
+        make_session_with_subagents(&c, project_path.to_str().unwrap(), &["top"]);
     let nested = subagents.join("workflows").join("run-1");
     fs::create_dir_all(&nested).unwrap();
     fs::write(nested.join("agent-nested.jsonl"), "{}\n").unwrap();
@@ -1288,7 +1563,9 @@ fn subagent_messages_empty_agent_id() {
 fn subagent_messages_nonexistent_session() {
     let _g = env_guard!();
     let _c = claude_config_dir();
-    assert!(get_subagent_messages(&new_uuid(), "abc", None, None, 0).unwrap().is_empty());
+    assert!(get_subagent_messages(&new_uuid(), "abc", None, None, 0)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -1299,7 +1576,11 @@ fn subagent_messages_nonexistent_agent() {
     let project_path = tmp.path().join("proj");
     fs::create_dir_all(&project_path).unwrap();
     let (sid, _) = make_session_with_subagents(&c, project_path.to_str().unwrap(), &["other"]);
-    assert!(get_subagent_messages(&sid, "missing", Some(&project_path), None, 0).unwrap().is_empty());
+    assert!(
+        get_subagent_messages(&sid, "missing", Some(&project_path), None, 0)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1317,7 +1598,12 @@ fn subagent_messages_simple_chain() {
         tentry("user", &u2, Some(&a1), &sid, Some(json!("continue"))),
         tentry("assistant", &a2, Some(&u2), &sid, Some(json!("done"))),
     ];
-    let body = entries.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n") + "\n";
+    let body = entries
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
     fs::write(subagents.join("agent-abc.jsonl"), body).unwrap();
 
     let msgs = get_subagent_messages(&sid, "abc", Some(&project_path), None, 0).unwrap();
@@ -1343,7 +1629,12 @@ fn subagent_messages_nested_subdirectory() {
         tentry("user", &u1, None, &sid, Some(json!("hi"))),
         tentry("assistant", &a1, Some(&u1), &sid, Some(json!("hello"))),
     ];
-    let body = entries.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n") + "\n";
+    let body = entries
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
     fs::write(nested.join("agent-deep.jsonl"), body).unwrap();
 
     let msgs = get_subagent_messages(&sid, "deep", Some(&project_path), None, 0).unwrap();
@@ -1382,19 +1673,47 @@ fn subagent_messages_limit_and_offset() {
         .iter()
         .enumerate()
         .map(|(i, uid)| {
-            let parent = if i > 0 { Some(us[i - 1].as_str()) } else { None };
+            let parent = if i > 0 {
+                Some(us[i - 1].as_str())
+            } else {
+                None
+            };
             let t = if i % 2 == 0 { "user" } else { "assistant" };
             tentry(t, uid, parent, &sid, Some(json!(format!("m{i}"))))
         })
         .collect();
-    let body = entries.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n") + "\n";
+    let body = entries
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
     fs::write(subagents.join("agent-p.jsonl"), body).unwrap();
 
-    assert_eq!(get_subagent_messages(&sid, "p", Some(&project_path), None, 0).unwrap().len(), 6);
-    assert_eq!(ids(&get_subagent_messages(&sid, "p", Some(&project_path), Some(2), 0).unwrap()), us[..2].to_vec());
-    assert_eq!(ids(&get_subagent_messages(&sid, "p", Some(&project_path), Some(2), 2).unwrap()), us[2..4].to_vec());
-    assert_eq!(ids(&get_subagent_messages(&sid, "p", Some(&project_path), None, 4).unwrap()), us[4..].to_vec());
-    assert_eq!(get_subagent_messages(&sid, "p", Some(&project_path), Some(0), 0).unwrap().len(), 6);
+    assert_eq!(
+        get_subagent_messages(&sid, "p", Some(&project_path), None, 0)
+            .unwrap()
+            .len(),
+        6
+    );
+    assert_eq!(
+        ids(&get_subagent_messages(&sid, "p", Some(&project_path), Some(2), 0).unwrap()),
+        us[..2].to_vec()
+    );
+    assert_eq!(
+        ids(&get_subagent_messages(&sid, "p", Some(&project_path), Some(2), 2).unwrap()),
+        us[2..4].to_vec()
+    );
+    assert_eq!(
+        ids(&get_subagent_messages(&sid, "p", Some(&project_path), None, 4).unwrap()),
+        us[4..].to_vec()
+    );
+    assert_eq!(
+        get_subagent_messages(&sid, "p", Some(&project_path), Some(0), 0)
+            .unwrap()
+            .len(),
+        6
+    );
 }
 
 #[test]
@@ -1406,5 +1725,9 @@ fn subagent_messages_empty_file() {
     fs::create_dir_all(&project_path).unwrap();
     let (sid, subagents) = make_session_with_subagents(&c, project_path.to_str().unwrap(), &[]);
     fs::write(subagents.join("agent-empty.jsonl"), "").unwrap();
-    assert!(get_subagent_messages(&sid, "empty", Some(&project_path), None, 0).unwrap().is_empty());
+    assert!(
+        get_subagent_messages(&sid, "empty", Some(&project_path), None, 0)
+            .unwrap()
+            .is_empty()
+    );
 }

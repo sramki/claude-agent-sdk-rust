@@ -27,7 +27,10 @@ use serde_json::{json, Map, Value};
 fn effort_level_wire_values() {
     // Python asserts get_args(EffortLevel) == {"low","medium","high","xhigh","max"}.
     // The Rust analog is the serde wire value of each variant.
-    assert_eq!(serde_json::to_value(EffortLevel::Low).unwrap(), json!("low"));
+    assert_eq!(
+        serde_json::to_value(EffortLevel::Low).unwrap(),
+        json!("low")
+    );
     assert_eq!(
         serde_json::to_value(EffortLevel::Medium).unwrap(),
         json!("medium")
@@ -40,7 +43,10 @@ fn effort_level_wire_values() {
         serde_json::to_value(EffortLevel::Xhigh).unwrap(),
         json!("xhigh")
     );
-    assert_eq!(serde_json::to_value(EffortLevel::Max).unwrap(), json!("max"));
+    assert_eq!(
+        serde_json::to_value(EffortLevel::Max).unwrap(),
+        json!("max")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +355,10 @@ fn content_block_tags_roundtrip() {
         signature: "s".into(),
     }))
     .unwrap();
-    assert_eq!(v, json!({"type": "thinking", "thinking": "t", "signature": "s"}));
+    assert_eq!(
+        v,
+        json!({"type": "thinking", "thinking": "t", "signature": "s"})
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +472,10 @@ fn agent_mcp_servers_serializes_as_camelcase() {
     assert!(obj.contains_key("mcpServers"));
     assert!(!obj.contains_key("mcp_servers"));
     assert_eq!(payload["mcpServers"][0], json!("slack"));
-    assert_eq!(payload["mcpServers"][1]["local"]["command"], json!("python"));
+    assert_eq!(
+        payload["mcpServers"][1]["local"]["command"],
+        json!("python")
+    );
 }
 
 #[test]

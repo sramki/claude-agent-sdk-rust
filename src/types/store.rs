@@ -97,10 +97,7 @@ pub trait SessionStore: Send + Sync {
     }
 
     /// Returns incrementally-maintained summaries for all sessions. Optional.
-    async fn list_session_summaries(
-        &self,
-        _project_key: &str,
-    ) -> Result<Vec<SessionSummaryEntry>> {
+    async fn list_session_summaries(&self, _project_key: &str) -> Result<Vec<SessionSummaryEntry>> {
         Err(Error::Unsupported("SessionStore::list_session_summaries"))
     }
 

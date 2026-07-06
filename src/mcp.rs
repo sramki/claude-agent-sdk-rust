@@ -26,16 +26,32 @@ pub struct ToolAnnotations {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// Whether the tool is read-only.
-    #[serde(rename = "readOnlyHint", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "readOnlyHint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub read_only_hint: Option<bool>,
     /// Whether the tool is destructive.
-    #[serde(rename = "destructiveHint", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "destructiveHint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub destructive_hint: Option<bool>,
     /// Whether the tool is idempotent.
-    #[serde(rename = "idempotentHint", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "idempotentHint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub idempotent_hint: Option<bool>,
     /// Whether the tool touches the open world.
-    #[serde(rename = "openWorldHint", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "openWorldHint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub open_world_hint: Option<bool>,
     /// CLI layer-2 tool-result spill threshold (emitted via `_meta`).
     #[serde(skip)]
@@ -181,10 +197,7 @@ fn build_tool_list_entry(tool: &SdkMcpTool) -> Value {
             serde_json::to_value(ann).unwrap_or(Value::Null),
         );
         if let Some(max) = ann.max_result_size_chars {
-            entry.insert(
-                "_meta".into(),
-                json!({"anthropic/maxResultSizeChars": max}),
-            );
+            entry.insert("_meta".into(), json!({"anthropic/maxResultSizeChars": max}));
         }
     }
     Value::Object(entry)

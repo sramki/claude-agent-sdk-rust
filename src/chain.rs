@@ -128,7 +128,10 @@ pub(crate) fn build_conversation_chain(entries: &[Value]) -> Vec<Value> {
 
     // From each terminal, walk back to the nearest user/assistant leaf.
     let mut leaves: Vec<&Value> = Vec::new();
-    for terminal in entries.iter().filter(|e| !parent_uuids.contains(entry_uuid(e))) {
+    for terminal in entries
+        .iter()
+        .filter(|e| !parent_uuids.contains(entry_uuid(e)))
+    {
         let mut cur: Option<&Value> = Some(terminal);
         let mut seen: HashSet<&str> = HashSet::new();
         while let Some(node) = cur {
@@ -152,7 +155,9 @@ pub(crate) fn build_conversation_chain(entries: &[Value]) -> Vec<Value> {
     let main_leaves: Vec<&Value> = leaves
         .iter()
         .copied()
-        .filter(|leaf| !truthy(leaf, "isSidechain") && !truthy(leaf, "teamName") && !truthy(leaf, "isMeta"))
+        .filter(|leaf| {
+            !truthy(leaf, "isSidechain") && !truthy(leaf, "teamName") && !truthy(leaf, "isMeta")
+        })
         .collect();
 
     let leaf = if main_leaves.is_empty() {
@@ -218,7 +223,10 @@ pub(crate) fn build_subagent_chain(entries: &[Value]) -> Vec<Value> {
 /// `_is_visible_message`: user/assistant only, drop meta/sidechain/team, KEEP
 /// `isCompactSummary`.
 fn is_visible_message(e: &Value) -> bool {
-    is_user_or_assistant(e) && !truthy(e, "isMeta") && !truthy(e, "isSidechain") && !truthy(e, "teamName")
+    is_user_or_assistant(e)
+        && !truthy(e, "isMeta")
+        && !truthy(e, "isSidechain")
+        && !truthy(e, "teamName")
 }
 
 /// Converts a transcript entry into a [`SessionMessage`]. Mirrors
@@ -232,14 +240,22 @@ fn to_session_message(e: &Value) -> SessionMessage {
     SessionMessage {
         message_type,
         uuid: entry_uuid(e).to_string(),
-        session_id: e.get("sessionId").and_then(Value::as_str).unwrap_or("").to_string(),
+        session_id: e
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         message: e.get("message").cloned().unwrap_or(Value::Null),
         parent_tool_use_id: None,
     }
 }
 
 /// Applies Python-style `[offset:offset+limit]` / `[offset:]` paging.
-fn paginate(messages: Vec<SessionMessage>, limit: Option<usize>, offset: usize) -> Vec<SessionMessage> {
+fn paginate(
+    messages: Vec<SessionMessage>,
+    limit: Option<usize>,
+    offset: usize,
+) -> Vec<SessionMessage> {
     let len = messages.len();
     if let Some(l) = limit {
         if l > 0 {

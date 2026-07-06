@@ -26,22 +26,39 @@ fn as_object<'a>(data: &'a Value, ctx: &str) -> Result<&'a Map<String, Value>> {
 }
 
 /// Fetches a required field or returns a `MessageParseError`.
-fn require<'a>(obj: &'a Map<String, Value>, key: &str, data: &Value, kind: &str) -> Result<&'a Value> {
-    obj.get(key)
-        .ok_or_else(|| parse_err(format!("Missing required field in {kind} message: '{key}'"), data))
+fn require<'a>(
+    obj: &'a Map<String, Value>,
+    key: &str,
+    data: &Value,
+    kind: &str,
+) -> Result<&'a Value> {
+    obj.get(key).ok_or_else(|| {
+        parse_err(
+            format!("Missing required field in {kind} message: '{key}'"),
+            data,
+        )
+    })
 }
 
 fn require_str(obj: &Map<String, Value>, key: &str, data: &Value, kind: &str) -> Result<String> {
     require(obj, key, data, kind)?
         .as_str()
         .map(str::to_string)
-        .ok_or_else(|| parse_err(format!("Field '{key}' in {kind} message is not a string"), data))
+        .ok_or_else(|| {
+            parse_err(
+                format!("Field '{key}' in {kind} message is not a string"),
+                data,
+            )
+        })
 }
 
 fn require_i64(obj: &Map<String, Value>, key: &str, data: &Value, kind: &str) -> Result<i64> {
-    require(obj, key, data, kind)?
-        .as_i64()
-        .ok_or_else(|| parse_err(format!("Field '{key}' in {kind} message is not an integer"), data))
+    require(obj, key, data, kind)?.as_i64().ok_or_else(|| {
+        parse_err(
+            format!("Field '{key}' in {kind} message is not an integer"),
+            data,
+        )
+    })
 }
 
 fn opt_str(obj: &Map<String, Value>, key: &str) -> Option<String> {
@@ -185,7 +202,10 @@ pub fn parse_message(data: &Value) -> Result<Option<Message>> {
             let message = require(obj, "message", data, "assistant")?
                 .as_object()
                 .ok_or_else(|| {
-                    parse_err("Field 'message' in assistant message is not an object", data)
+                    parse_err(
+                        "Field 'message' in assistant message is not an object",
+                        data,
+                    )
                 })?;
             let raw_content = require(message, "content", data, "assistant")?;
             let arr = raw_content
@@ -233,8 +253,8 @@ pub fn parse_message(data: &Value) -> Result<Option<Message>> {
                     tool_use_id: opt_str(obj, "tool_use_id"),
                     last_tool_name: opt_str(obj, "last_tool_name"),
                 })),
-                "task_notification" => {
-                    Some(SystemMessageKind::TaskNotification(TaskNotificationMessage {
+                "task_notification" => Some(SystemMessageKind::TaskNotification(
+                    TaskNotificationMessage {
                         task_id: require_str(obj, "task_id", data, "system")?,
                         status: serde_json::from_value(
                             require(obj, "status", data, "system")?.clone(),
@@ -248,8 +268,8 @@ pub fn parse_message(data: &Value) -> Result<Option<Message>> {
                         usage: obj
                             .get("usage")
                             .and_then(|u| serde_json::from_value(u.clone()).ok()),
-                    }))
-                }
+                    },
+                )),
                 "task_updated" => {
                     // Parsed defensively — a lifecycle event must never fail to parse.
                     let patch = opt_obj(obj, "patch").unwrap_or_default();
@@ -324,8 +344,12 @@ pub fn parse_message(data: &Value) -> Result<Option<Message>> {
         "stream_event" => Ok(Some(Message::StreamEvent(StreamEvent {
             uuid: require_str(obj, "uuid", data, "stream_event")?,
             session_id: require_str(obj, "session_id", data, "stream_event")?,
-            event: opt_obj(obj, "event")
-                .ok_or_else(|| parse_err("Missing required field in stream_event message: 'event'", data))?,
+            event: opt_obj(obj, "event").ok_or_else(|| {
+                parse_err(
+                    "Missing required field in stream_event message: 'event'",
+                    data,
+                )
+            })?,
             parent_tool_use_id: opt_str(obj, "parent_tool_use_id"),
         }))),
 
@@ -408,7 +432,9 @@ mod tests {
     #[test]
     fn parse_user_string_content() {
         let data = json!({"type": "user", "message": {"content": "hello"}});
-        let Message::User(u) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::User(u) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         assert_eq!(u.content, UserContent::Text("hello".into()));
     }
 
@@ -419,7 +445,9 @@ mod tests {
             "duration_api_ms": 5, "is_error": false, "num_turns": 1, "session_id": "s",
             "total_cost_usd": 0.01, "modelUsage": {"a": 1},
         });
-        let Message::Result(r) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::Result(r) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         assert_eq!(r.subtype, "success");
         assert_eq!(r.total_cost_usd, Some(0.01));
         assert!(r.model_usage.is_some());
@@ -431,7 +459,9 @@ mod tests {
             "type": "system", "subtype": "task_started", "task_id": "t1",
             "description": "do it", "uuid": "u", "session_id": "s",
         });
-        let Message::System(s) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::System(s) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         assert_eq!(s.subtype, "task_started");
         assert!(matches!(s.kind, Some(SystemMessageKind::TaskStarted(_))));
     }
@@ -442,7 +472,9 @@ mod tests {
             "type": "system", "subtype": "hook_started", "hook_event": "PreToolUse",
             "session_id": "s", "uuid": "u",
         });
-        let Message::System(s) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::System(s) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         match s.kind {
             Some(SystemMessageKind::HookEvent(h)) => assert_eq!(h.hook_event_name, "PreToolUse"),
             _ => panic!(),
@@ -452,7 +484,9 @@ mod tests {
     #[test]
     fn parse_generic_system() {
         let data = json!({"type": "system", "subtype": "init", "cwd": "/x"});
-        let Message::System(s) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::System(s) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         assert_eq!(s.subtype, "init");
         assert!(s.kind.is_none());
     }
@@ -466,7 +500,10 @@ mod tests {
     #[test]
     fn missing_type_errors() {
         let data = json!({"foo": 1});
-        assert!(matches!(parse_message(&data), Err(Error::MessageParse { .. })));
+        assert!(matches!(
+            parse_message(&data),
+            Err(Error::MessageParse { .. })
+        ));
     }
 
     #[test]
@@ -481,7 +518,9 @@ mod tests {
             "type": "rate_limit_event", "uuid": "u", "session_id": "s",
             "rate_limit_info": {"status": "allowed_warning", "resetsAt": 123, "rateLimitType": "five_hour"},
         });
-        let Message::RateLimit(e) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::RateLimit(e) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         assert_eq!(e.rate_limit_info.resets_at, Some(123));
     }
 
@@ -523,17 +562,23 @@ mod tests {
         use crate::types::AssistantMessageError;
         // A recognized error string.
         let data = json!({"type": "assistant", "message": {"model": "m", "content": []}, "error": "rate_limit"});
-        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         assert_eq!(a.error, Some(AssistantMessageError::RateLimit));
 
         // An unrecognized error string is preserved as Unknown (not dropped).
         let data = json!({"type": "assistant", "message": {"model": "m", "content": []}, "error": "some_future_error"});
-        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         assert_eq!(a.error, Some(AssistantMessageError::Unknown));
 
         // No error field -> None.
         let data = json!({"type": "assistant", "message": {"model": "m", "content": []}});
-        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else { panic!() };
+        let Message::Assistant(a) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
         assert_eq!(a.error, None);
     }
 }

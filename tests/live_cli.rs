@@ -23,7 +23,11 @@ use claude_agent_sdk_rs::{
 
 /// Locates `claude` on `PATH` (matching the SDK's own discovery), or `None`.
 fn find_claude() -> Option<PathBuf> {
-    let exe = if cfg!(windows) { "claude.exe" } else { "claude" };
+    let exe = if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    };
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
             .map(|d| d.join(exe))
@@ -133,7 +137,9 @@ async fn live_client_interactive() {
 }
 
 /// Drains a client message stream until a `ResultMessage`, returning it.
-async fn drain_to_result(stream: &mut claude_agent_sdk_rs::MessageStream) -> claude_agent_sdk_rs::types::ResultMessage {
+async fn drain_to_result(
+    stream: &mut claude_agent_sdk_rs::MessageStream,
+) -> claude_agent_sdk_rs::types::ResultMessage {
     while let Some(item) = stream.next().await {
         if let Message::Result(r) = item.expect("no stream error") {
             return r;
@@ -153,7 +159,10 @@ async fn live_control_methods_against_real_cli() {
         client.connect(None).await.expect("connect");
 
         let mut stream = client.messages();
-        client.query("Say hi in one word.", "default").await.expect("query");
+        client
+            .query("Say hi in one word.", "default")
+            .await
+            .expect("query");
         let result = drain_to_result(&mut stream).await;
         assert!(!result.is_error, "result errored: {result:?}");
 
@@ -203,7 +212,10 @@ async fn live_sdk_mcp_tool_is_called_by_model() {
         },
     );
     let mut servers = HashMap::new();
-    servers.insert("greeter".to_string(), create_sdk_mcp_server("greeter", "1.0.0", vec![greet]));
+    servers.insert(
+        "greeter".to_string(),
+        create_sdk_mcp_server("greeter", "1.0.0", vec![greet]),
+    );
     let options = ClaudeAgentOptions {
         mcp_servers: McpServers::Map(servers),
         // Auto-approve the MCP tool so no permission prompt is needed.

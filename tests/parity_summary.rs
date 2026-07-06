@@ -11,7 +11,9 @@
 //!     (`_entries_to_jsonl` / `_jsonl_to_lite` / `_parse_session_info_from_lite`),
 //!     which are not reachable from an integration test.
 
-use claude_agent_sdk_rs::types::{SessionKey, SessionStore, SessionStoreEntry, SessionSummaryEntry};
+use claude_agent_sdk_rs::types::{
+    SessionKey, SessionStore, SessionStoreEntry, SessionSummaryEntry,
+};
 use claude_agent_sdk_rs::{fold_session_summary, summary_entry_to_sdk_info, InMemorySessionStore};
 use serde_json::{json, Map, Value};
 
@@ -74,7 +76,10 @@ fn fold_set_once_fields_freeze() {
             obj(json!({"type": "x", "timestamp": "2024-01-01T00:00:05.000Z", "cwd": "/b"})),
         ],
     );
-    assert_eq!(s.data.get("created_at").and_then(Value::as_i64), Some(1704067200000));
+    assert_eq!(
+        s.data.get("created_at").and_then(Value::as_i64),
+        Some(1704067200000)
+    );
     assert_eq!(get_str(&s.data, "cwd"), Some("/a"));
     assert_eq!(s.data.get("is_sidechain"), Some(&Value::Bool(false)));
 
@@ -89,7 +94,10 @@ fn fold_set_once_fields_freeze() {
             "isSidechain": true,
         }))],
     );
-    assert_eq!(s2.data.get("created_at").and_then(Value::as_i64), Some(1704067200000));
+    assert_eq!(
+        s2.data.get("created_at").and_then(Value::as_i64),
+        Some(1704067200000)
+    );
     assert_eq!(get_str(&s2.data, "cwd"), Some("/a"));
     assert_eq!(s2.data.get("is_sidechain"), Some(&Value::Bool(false)));
 }
@@ -152,21 +160,35 @@ fn fold_mtime_not_derived_from_entries() {
     let s2 = fold_session_summary(
         Some(&prev),
         &key(KEY_SID),
-        &[obj(json!({"type": "x", "timestamp": "2024-01-01T00:00:10.000Z"}))],
+        &[obj(
+            json!({"type": "x", "timestamp": "2024-01-01T00:00:10.000Z"}),
+        )],
     );
     assert_eq!(s2.mtime, 42);
 }
 
 #[test]
 fn fold_tag_set_and_clear() {
-    let s = fold_session_summary(None, &key(KEY_SID), &[obj(json!({"type": "tag", "tag": "wip"}))]);
+    let s = fold_session_summary(
+        None,
+        &key(KEY_SID),
+        &[obj(json!({"type": "tag", "tag": "wip"}))],
+    );
     assert_eq!(get_str(&s.data, "tag"), Some("wip"));
 
-    let s2 = fold_session_summary(Some(&s), &key(KEY_SID), &[obj(json!({"type": "tag", "tag": ""}))]);
+    let s2 = fold_session_summary(
+        Some(&s),
+        &key(KEY_SID),
+        &[obj(json!({"type": "tag", "tag": ""}))],
+    );
     assert!(!s2.data.contains_key("tag"));
 
     // Non-tag entries with a "tag" key (e.g. tool_use input) are ignored.
-    let s3 = fold_session_summary(Some(&s), &key(KEY_SID), &[obj(json!({"type": "user", "tag": "ignored"}))]);
+    let s3 = fold_session_summary(
+        Some(&s),
+        &key(KEY_SID),
+        &[obj(json!({"type": "user", "tag": "ignored"}))],
+    );
     assert_eq!(get_str(&s3.data, "tag"), Some("wip"));
 }
 
@@ -175,7 +197,9 @@ fn fold_sidechain_from_first_entry() {
     let s = fold_session_summary(
         None,
         &key(KEY_SID),
-        &[obj(json!({"type": "x", "timestamp": "2024-01-01T00:00:00Z", "isSidechain": true}))],
+        &[obj(
+            json!({"type": "x", "timestamp": "2024-01-01T00:00:00Z", "isSidechain": true}),
+        )],
     );
     assert_eq!(s.data.get("is_sidechain"), Some(&Value::Bool(true)));
 }
@@ -194,7 +218,10 @@ fn fold_sidechain_latched_when_first_entry_lacks_timestamp() {
     );
     assert_eq!(s.data.get("is_sidechain"), Some(&Value::Bool(true)));
     // created_at still picks up the first parseable timestamp.
-    assert_eq!(s.data.get("created_at").and_then(Value::as_i64), Some(1704067200000));
+    assert_eq!(
+        s.data.get("created_at").and_then(Value::as_i64),
+        Some(1704067200000)
+    );
 }
 
 #[test]
@@ -272,7 +299,11 @@ fn fold_prev_is_not_mutated() {
         mtime: 5,
         data: Map::new(),
     };
-    let _ = fold_session_summary(Some(&prev), &key(KEY_SID), &[obj(json!({"type": "x", "customTitle": "t"}))]);
+    let _ = fold_session_summary(
+        Some(&prev),
+        &key(KEY_SID),
+        &[obj(json!({"type": "x", "customTitle": "t"}))],
+    );
     assert_eq!(prev.session_id, "a");
     assert_eq!(prev.mtime, 5);
     assert!(prev.data.is_empty());
@@ -345,11 +376,18 @@ fn info_precedence_chain() {
 
 #[test]
 fn info_cwd_fallback_to_project_path() {
-    let info = summary_entry_to_sdk_info(&summary(obj(json!({"custom_title": "t"})), 1), Some("/proj")).unwrap();
+    let info = summary_entry_to_sdk_info(
+        &summary(obj(json!({"custom_title": "t"})), 1),
+        Some("/proj"),
+    )
+    .unwrap();
     assert_eq!(info.cwd.as_deref(), Some("/proj"));
 
-    let info2 =
-        summary_entry_to_sdk_info(&summary(obj(json!({"custom_title": "t", "cwd": "/own"})), 1), Some("/proj")).unwrap();
+    let info2 = summary_entry_to_sdk_info(
+        &summary(obj(json!({"custom_title": "t", "cwd": "/own"})), 1),
+        Some("/proj"),
+    )
+    .unwrap();
     assert_eq!(info2.cwd.as_deref(), Some("/own"));
 }
 
@@ -386,9 +424,18 @@ async fn store_tracks_appends() {
     let store = InMemorySessionStore::new();
     let a = key("a");
     let b = key("b");
-    store.append(&a, &[user_ts("hello a", "2024-01-01T00:00:00Z")]).await.unwrap();
-    store.append(&a, &[obj(json!({"type": "x", "customTitle": "Title A"}))]).await.unwrap();
-    store.append(&b, &[user_ts("hello b", "2024-01-02T00:00:00Z")]).await.unwrap();
+    store
+        .append(&a, &[user_ts("hello a", "2024-01-01T00:00:00Z")])
+        .await
+        .unwrap();
+    store
+        .append(&a, &[obj(json!({"type": "x", "customTitle": "Title A"}))])
+        .await
+        .unwrap();
+    store
+        .append(&b, &[user_ts("hello b", "2024-01-02T00:00:00Z")])
+        .await
+        .unwrap();
 
     let summaries: std::collections::HashMap<String, SessionSummaryEntry> = store
         .list_session_summaries(PROJECT_KEY)
@@ -398,11 +445,25 @@ async fn store_tracks_appends() {
         .map(|s| (s.session_id.clone(), s))
         .collect();
 
-    assert_eq!(summaries.keys().cloned().collect::<std::collections::BTreeSet<_>>(),
-        ["a".to_string(), "b".to_string()].into_iter().collect());
-    assert_eq!(get_str(&summaries["a"].data, "custom_title"), Some("Title A"));
-    assert_eq!(get_str(&summaries["a"].data, "first_prompt"), Some("hello a"));
-    assert_eq!(get_str(&summaries["b"].data, "first_prompt"), Some("hello b"));
+    assert_eq!(
+        summaries
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["a".to_string(), "b".to_string()].into_iter().collect()
+    );
+    assert_eq!(
+        get_str(&summaries["a"].data, "custom_title"),
+        Some("Title A")
+    );
+    assert_eq!(
+        get_str(&summaries["a"].data, "first_prompt"),
+        Some("hello a")
+    );
+    assert_eq!(
+        get_str(&summaries["b"].data, "first_prompt"),
+        Some("hello b")
+    );
 }
 
 #[tokio::test]
@@ -416,13 +477,22 @@ async fn store_subpath_appends_ignored() {
     };
     store.append(&main, &[user("main prompt")]).await.unwrap();
     store
-        .append(&sub, &[user("sub prompt"), obj(json!({"type": "x", "customTitle": "sub"}))])
+        .append(
+            &sub,
+            &[
+                user("sub prompt"),
+                obj(json!({"type": "x", "customTitle": "sub"})),
+            ],
+        )
         .await
         .unwrap();
 
     let summaries = store.list_session_summaries(PROJECT_KEY).await.unwrap();
     assert_eq!(summaries.len(), 1);
-    assert_eq!(get_str(&summaries[0].data, "first_prompt"), Some("main prompt"));
+    assert_eq!(
+        get_str(&summaries[0].data, "first_prompt"),
+        Some("main prompt")
+    );
     assert!(!summaries[0].data.contains_key("custom_title"));
 }
 
@@ -431,16 +501,35 @@ async fn store_delete_drops_summary() {
     let store = InMemorySessionStore::new();
     let k = key("x");
     store.append(&k, &[user("hi")]).await.unwrap();
-    assert_eq!(store.list_session_summaries(PROJECT_KEY).await.unwrap().len(), 1);
+    assert_eq!(
+        store
+            .list_session_summaries(PROJECT_KEY)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     store.delete(&k).await.unwrap();
-    assert!(store.list_session_summaries(PROJECT_KEY).await.unwrap().is_empty());
+    assert!(store
+        .list_session_summaries(PROJECT_KEY)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
 async fn store_project_isolation() {
     let store = InMemorySessionStore::new();
-    let ka = SessionKey { project_key: "A".into(), session_id: "s".into(), subpath: None };
-    let kb = SessionKey { project_key: "B".into(), session_id: "s".into(), subpath: None };
+    let ka = SessionKey {
+        project_key: "A".into(),
+        session_id: "s".into(),
+        subpath: None,
+    };
+    let kb = SessionKey {
+        project_key: "B".into(),
+        session_id: "s".into(),
+        subpath: None,
+    };
     store.append(&ka, &[user("a")]).await.unwrap();
     store.append(&kb, &[user("b")]).await.unwrap();
     assert_eq!(store.list_session_summaries("A").await.unwrap().len(), 1);

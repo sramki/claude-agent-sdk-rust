@@ -112,7 +112,10 @@ fn parse_user_message_with_tool_use() {
         ContentBlock::ToolUse(t) => {
             assert_eq!(t.id, "tool_456");
             assert_eq!(t.name, "Read");
-            assert_eq!(Value::Object(t.input.clone()), json!({"file_path": "/example.txt"}));
+            assert_eq!(
+                Value::Object(t.input.clone()),
+                json!({"file_path": "/example.txt"})
+            );
         }
         other => panic!("expected ToolUse, got {other:?}"),
     }
@@ -132,7 +135,10 @@ fn parse_user_message_with_tool_result() {
     match &bs[0] {
         ContentBlock::ToolResult(t) => {
             assert_eq!(t.tool_use_id, "tool_789");
-            assert_eq!(t.content, Some(ToolResultContent::Text("File contents here".into())));
+            assert_eq!(
+                t.content,
+                Some(ToolResultContent::Text("File contents here".into()))
+            );
         }
         other => panic!("expected ToolResult, got {other:?}"),
     }
@@ -151,7 +157,10 @@ fn parse_user_message_with_tool_result_error() {
     match &blocks(&u)[0] {
         ContentBlock::ToolResult(t) => {
             assert_eq!(t.tool_use_id, "tool_error");
-            assert_eq!(t.content, Some(ToolResultContent::Text("File not found".into())));
+            assert_eq!(
+                t.content,
+                Some(ToolResultContent::Text("File not found".into()))
+            );
             assert_eq!(t.is_error, Some(true));
         }
         other => panic!("expected ToolResult, got {other:?}"),
@@ -186,7 +195,10 @@ fn parse_user_message_inside_subagent() {
         "parent_tool_use_id": "toolu_01Xrwd5Y13sEHtzScxR77So8",
     });
     let u = as_user(&data);
-    assert_eq!(u.parent_tool_use_id.as_deref(), Some("toolu_01Xrwd5Y13sEHtzScxR77So8"));
+    assert_eq!(
+        u.parent_tool_use_id.as_deref(),
+        Some("toolu_01Xrwd5Y13sEHtzScxR77So8")
+    );
 }
 
 #[test]
@@ -221,7 +233,10 @@ fn parse_user_message_with_tool_use_result() {
     assert_eq!(tur["oldString"], json!("old code"));
     assert_eq!(tur["newString"], json!("new code"));
     assert_eq!(tur["structuredPatch"][0]["oldStart"], json!(33));
-    assert_eq!(u.uuid.as_deref(), Some("2ace3375-1879-48a0-a421-6bce25a9295a"));
+    assert_eq!(
+        u.uuid.as_deref(),
+        Some("2ace3375-1879-48a0-a421-6bce25a9295a")
+    );
     // parent_tool_use_id was explicit null -> None.
     assert_eq!(u.parent_tool_use_id, None);
 }
@@ -236,7 +251,10 @@ fn parse_user_message_with_string_content_and_tool_use_result() {
     });
     let u = as_user(&data);
     assert_eq!(u.content, UserContent::Text("Simple string content".into()));
-    assert_eq!(Value::Object(u.tool_use_result.clone().unwrap()), tool_result_data);
+    assert_eq!(
+        Value::Object(u.tool_use_result.clone().unwrap()),
+        tool_result_data
+    );
 }
 
 // ---- assistant messages ---------------------------------------------------
@@ -414,14 +432,20 @@ fn parse_assistant_message_error_classifications() {
         "session_id": "test-session",
         "error": "unknown",
     });
-    assert_eq!(as_assistant(&unknown).error, Some(AssistantMessageError::Unknown));
+    assert_eq!(
+        as_assistant(&unknown).error,
+        Some(AssistantMessageError::Unknown)
+    );
 
     let rate = json!({
         "type": "assistant",
         "message": {"content": [{"type": "text", "text": "Rate limit exceeded"}], "model": "<synthetic>"},
         "error": "rate_limit",
     });
-    assert_eq!(as_assistant(&rate).error, Some(AssistantMessageError::RateLimit));
+    assert_eq!(
+        as_assistant(&rate).error,
+        Some(AssistantMessageError::RateLimit)
+    );
 }
 
 #[test]
@@ -439,10 +463,19 @@ fn parse_assistant_message_with_all_fields() {
         "uuid": "0dbd2453-1209-4fe9-bd51-4102f64e33df",
     });
     let a = as_assistant(&data);
-    assert_eq!(a.message_id.as_deref(), Some("msg_01HRq7YZE3apPqSHydvG77Ve"));
+    assert_eq!(
+        a.message_id.as_deref(),
+        Some("msg_01HRq7YZE3apPqSHydvG77Ve")
+    );
     assert_eq!(a.stop_reason.as_deref(), Some("end_turn"));
-    assert_eq!(a.session_id.as_deref(), Some("fdf2d90a-fd9e-4736-ae35-806edd13643f"));
-    assert_eq!(a.uuid.as_deref(), Some("0dbd2453-1209-4fe9-bd51-4102f64e33df"));
+    assert_eq!(
+        a.session_id.as_deref(),
+        Some("fdf2d90a-fd9e-4736-ae35-806edd13643f")
+    );
+    assert_eq!(
+        a.uuid.as_deref(),
+        Some("0dbd2453-1209-4fe9-bd51-4102f64e33df")
+    );
     assert_eq!(
         Value::Object(a.usage.clone().unwrap()),
         json!({"input_tokens": 10, "output_tokens": 5})
@@ -500,7 +533,9 @@ fn parse_task_started_message_optional_fields_absent() {
         "uuid": "uuid-1", "session_id": "session-1",
     });
     let s = as_system(&data);
-    let Some(SystemMessageKind::TaskStarted(t)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::TaskStarted(t)) = &s.kind else {
+        panic!()
+    };
     assert_eq!(t.tool_use_id, None);
     assert_eq!(t.task_type, None);
 }
@@ -514,7 +549,9 @@ fn parse_task_progress_message() {
         "last_tool_name": "Read", "uuid": "uuid-2", "session_id": "session-1",
     });
     let s = as_system(&data);
-    let Some(SystemMessageKind::TaskProgress(t)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::TaskProgress(t)) = &s.kind else {
+        panic!()
+    };
     assert_eq!(t.task_id, "task-abc");
     assert_eq!(t.description, "Halfway there");
     assert_eq!(t.usage.total_tokens, 1234);
@@ -536,7 +573,9 @@ fn parse_task_notification_message() {
         "uuid": "uuid-3", "session_id": "session-1",
     });
     let s = as_system(&data);
-    let Some(SystemMessageKind::TaskNotification(t)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::TaskNotification(t)) = &s.kind else {
+        panic!()
+    };
     assert_eq!(t.task_id, "task-abc");
     assert_eq!(t.status, TaskNotificationStatus::Completed);
     assert_eq!(t.output_file, "/tmp/out.md");
@@ -559,7 +598,9 @@ fn parse_task_notification_message_optional_fields_absent() {
         "uuid": "uuid-3", "session_id": "session-1",
     });
     let s = as_system(&data);
-    let Some(SystemMessageKind::TaskNotification(t)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::TaskNotification(t)) = &s.kind else {
+        panic!()
+    };
     assert_eq!(t.status, TaskNotificationStatus::Failed);
     assert_eq!(t.usage, None);
     assert_eq!(t.tool_use_id, None);
@@ -574,7 +615,9 @@ fn parse_task_updated_message_terminal() {
         "uuid": "uuid-4", "session_id": "session-1",
     });
     let s = as_system(&data);
-    let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else {
+        panic!()
+    };
     assert_eq!(t.task_id, "task-abc");
     assert_eq!(
         Value::Object(t.patch.clone()),
@@ -594,7 +637,9 @@ fn parse_task_updated_message_minimal() {
         "patch": {"status": "completed", "end_time": 1_780_405_729_183i64},
     });
     let s = as_system(&data);
-    let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else {
+        panic!()
+    };
     assert_eq!(t.task_id, "b1m21w89v");
     assert_eq!(t.status, Some(TaskUpdatedStatus::Completed));
     assert_eq!(t.uuid, None);
@@ -613,7 +658,9 @@ fn parse_task_updated_message_non_terminal_statuses() {
             "task_id": "task-abc", "patch": {"status": status},
         });
         let s = as_system(&data);
-        let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else { panic!() };
+        let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else {
+            panic!()
+        };
         assert_eq!(t.status, Some(expected));
         assert!(!terminal(&t.status.unwrap()));
     }
@@ -623,7 +670,9 @@ fn parse_task_updated_message_non_terminal_statuses() {
 fn parse_task_updated_message_no_patch() {
     let data = json!({"type": "system", "subtype": "task_updated", "task_id": "task-abc"});
     let s = as_system(&data);
-    let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else {
+        panic!()
+    };
     assert!(t.patch.is_empty());
     assert_eq!(t.status, None);
 }
@@ -635,20 +684,32 @@ fn parse_task_updated_message_patch_without_status() {
         "patch": {"end_time": 1_780_405_729_183i64},
     });
     let s = as_system(&data);
-    let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else { panic!() };
-    assert_eq!(Value::Object(t.patch.clone()), json!({"end_time": 1_780_405_729_183i64}));
+    let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else {
+        panic!()
+    };
+    assert_eq!(
+        Value::Object(t.patch.clone()),
+        json!({"end_time": 1_780_405_729_183i64})
+    );
     assert_eq!(t.status, None);
 }
 
 #[test]
 fn parse_task_updated_message_non_dict_patch() {
     // A non-dict (or missing/null) patch never raises; patch falls back to {}.
-    for patch in [json!("completed"), json!(["completed"]), json!(42), Value::Null] {
+    for patch in [
+        json!("completed"),
+        json!(["completed"]),
+        json!(42),
+        Value::Null,
+    ] {
         let data = json!({
             "type": "system", "subtype": "task_updated", "task_id": "task-abc", "patch": patch,
         });
         let s = as_system(&data);
-        let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else { panic!() };
+        let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else {
+            panic!()
+        };
         assert!(t.patch.is_empty());
         assert_eq!(t.status, None);
     }
@@ -666,7 +727,9 @@ fn parse_task_updated_message_terminal_statuses() {
             "task_id": "task-abc", "patch": {"status": status},
         });
         let s = as_system(&data);
-        let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else { panic!() };
+        let Some(SystemMessageKind::TaskUpdated(t)) = &s.kind else {
+            panic!()
+        };
         assert_eq!(t.status, Some(expected));
         assert!(terminal(&t.status.unwrap()));
     }
@@ -766,7 +829,10 @@ fn parse_result_message_with_model_usage() {
     assert!(mu.contains_key("claude-sonnet-4-5-20250929"));
     assert_eq!(mu["claude-sonnet-4-5-20250929"]["costUSD"], json!(0.0106));
     assert_eq!(r.permission_denials, Some(vec![]));
-    assert_eq!(r.uuid.as_deref(), Some("d379c496-f33a-4ea4-b920-3c5483baa6f7"));
+    assert_eq!(
+        r.uuid.as_deref(),
+        Some("d379c496-f33a-4ea4-b920-3c5483baa6f7")
+    );
 }
 
 #[test]
@@ -798,7 +864,10 @@ fn parse_result_message_with_deferred_tool_use() {
     let d = r.deferred_tool_use.clone().unwrap();
     assert_eq!(d.id, "toolu_01abc");
     assert_eq!(d.name, "Bash");
-    assert_eq!(Value::Object(d.input.clone()), json!({"command": "rm -rf /tmp/scratch"}));
+    assert_eq!(
+        Value::Object(d.input.clone()),
+        json!({"command": "rm -rf /tmp/scratch"})
+    );
 }
 
 #[test]
@@ -860,13 +929,21 @@ fn parse_rate_limit_event() {
                             "rateLimitType": "five_hour", "utilization": 0.91},
         "uuid": "abc-123", "session_id": "session_xyz",
     });
-    let Message::RateLimit(e) = parse(&data) else { panic!("expected RateLimit") };
+    let Message::RateLimit(e) = parse(&data) else {
+        panic!("expected RateLimit")
+    };
     assert_eq!(e.uuid, "abc-123");
     assert_eq!(e.session_id, "session_xyz");
     let info = &e.rate_limit_info;
-    assert_eq!(serde_json::to_value(info.status).unwrap(), json!("allowed_warning"));
+    assert_eq!(
+        serde_json::to_value(info.status).unwrap(),
+        json!("allowed_warning")
+    );
     assert_eq!(info.resets_at, Some(1_700_000_000));
-    assert_eq!(serde_json::to_value(info.rate_limit_type.unwrap()).unwrap(), json!("five_hour"));
+    assert_eq!(
+        serde_json::to_value(info.rate_limit_type.unwrap()).unwrap(),
+        json!("five_hour")
+    );
     assert_eq!(info.utilization, Some(0.91));
 }
 
@@ -900,7 +977,9 @@ fn parse_hook_event_message_response() {
         "output": "", "exit_code": 0, "outcome": "success",
     });
     let s = as_system(&data);
-    let Some(SystemMessageKind::HookEvent(h)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::HookEvent(h)) = &s.kind else {
+        panic!()
+    };
     assert_eq!(s.subtype, "hook_response");
     assert_eq!(h.hook_event_name, "PostToolUse");
     assert_eq!(h.session_id.as_deref(), Some("sess-123"));
@@ -915,7 +994,9 @@ fn parse_hook_event_message_minimal() {
     // No session_id/uuid/hook_event; hook_event_name falls back to hook_name.
     let data = json!({"type": "system", "subtype": "hook_started", "hook_name": "Stop"});
     let s = as_system(&data);
-    let Some(SystemMessageKind::HookEvent(h)) = &s.kind else { panic!() };
+    let Some(SystemMessageKind::HookEvent(h)) = &s.kind else {
+        panic!()
+    };
     assert_eq!(s.subtype, "hook_started");
     assert_eq!(h.hook_event_name, "Stop");
     assert_eq!(h.session_id, None);
@@ -937,7 +1018,10 @@ fn parse_invalid_data_type() {
 fn parse_missing_type_field() {
     match parse_message(&json!({"message": {"content": []}})) {
         Err(Error::MessageParse { message, .. }) => {
-            assert!(message.contains("Message missing 'type' field"), "{message}");
+            assert!(
+                message.contains("Message missing 'type' field"),
+                "{message}"
+            );
         }
         other => panic!("expected MessageParse, got {other:?}"),
     }
@@ -946,14 +1030,19 @@ fn parse_missing_type_field() {
 #[test]
 fn parse_unknown_message_type() {
     // Forward-compatible skip: unknown top-level type -> Ok(None).
-    assert!(parse_message(&json!({"type": "unknown_type"})).unwrap().is_none());
+    assert!(parse_message(&json!({"type": "unknown_type"}))
+        .unwrap()
+        .is_none());
 }
 
 #[test]
 fn parse_user_message_missing_fields() {
     match parse_message(&json!({"type": "user"})) {
         Err(Error::MessageParse { message, .. }) => {
-            assert!(message.contains("Missing required field in user message"), "{message}");
+            assert!(
+                message.contains("Missing required field in user message"),
+                "{message}"
+            );
         }
         other => panic!("expected MessageParse, got {other:?}"),
     }
@@ -963,7 +1052,10 @@ fn parse_user_message_missing_fields() {
 fn parse_assistant_message_missing_fields() {
     match parse_message(&json!({"type": "assistant"})) {
         Err(Error::MessageParse { message, .. }) => {
-            assert!(message.contains("Missing required field in assistant message"), "{message}");
+            assert!(
+                message.contains("Missing required field in assistant message"),
+                "{message}"
+            );
         }
         other => panic!("expected MessageParse, got {other:?}"),
     }
@@ -1000,7 +1092,10 @@ fn non_dict_content_block_raises() {
 fn parse_system_message_missing_fields() {
     match parse_message(&json!({"type": "system"})) {
         Err(Error::MessageParse { message, .. }) => {
-            assert!(message.contains("Missing required field in system message"), "{message}");
+            assert!(
+                message.contains("Missing required field in system message"),
+                "{message}"
+            );
         }
         other => panic!("expected MessageParse, got {other:?}"),
     }
@@ -1010,7 +1105,10 @@ fn parse_system_message_missing_fields() {
 fn parse_result_message_missing_fields() {
     match parse_message(&json!({"type": "result", "subtype": "success"})) {
         Err(Error::MessageParse { message, .. }) => {
-            assert!(message.contains("Missing required field in result message"), "{message}");
+            assert!(
+                message.contains("Missing required field in result message"),
+                "{message}"
+            );
         }
         other => panic!("expected MessageParse, got {other:?}"),
     }

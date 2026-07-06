@@ -19,8 +19,8 @@ use tokio_stream::StreamExt;
 use super::transport::Transport;
 use crate::error::{Error, Result};
 use crate::types::{
-    HookCallback, HookContext, HookEvent, HookInput, HookMatcher, McpServerInstance, PermissionMode,
-    PermissionResult, PermissionUpdate, ToolPermissionContext,
+    HookCallback, HookContext, HookEvent, HookInput, HookMatcher, McpServerInstance,
+    PermissionMode, PermissionResult, PermissionUpdate, ToolPermissionContext,
 };
 
 const DEFAULT_CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -151,7 +151,11 @@ impl Query {
                 let mut m = Map::new();
                 m.insert(
                     "matcher".into(),
-                    matcher.matcher.clone().map(Value::String).unwrap_or(Value::Null),
+                    matcher
+                        .matcher
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
                 );
                 m.insert("hookCallbackIds".into(), Value::Array(callback_ids));
                 if let Some(t) = matcher.timeout {
@@ -204,7 +208,11 @@ impl Query {
         self.started = true;
         let stream = {
             // The transport lock is uncontended here (read loop not spawned yet).
-            let mut t = self.shared.transport.try_lock().expect("transport not locked");
+            let mut t = self
+                .shared
+                .transport
+                .try_lock()
+                .expect("transport not locked");
             t.read_messages()
         };
         let (out_tx, out_rx) = mpsc::channel::<Result<Value>>(100);
@@ -328,7 +336,11 @@ impl Query {
             .unwrap_or("")
             .to_string();
 
-        if let Err(e) = self.shared.write(&(control_request.to_string() + "\n")).await {
+        if let Err(e) = self
+            .shared
+            .write(&(control_request.to_string() + "\n"))
+            .await
+        {
             self.shared.pending.lock().await.remove(&request_id);
             return Err(e);
         }
@@ -350,7 +362,9 @@ impl Query {
             }
             Err(_elapsed) => {
                 self.shared.pending.lock().await.remove(&request_id);
-                Err(Error::connection(format!("Control request timeout: {subtype}")))
+                Err(Error::connection(format!(
+                    "Control request timeout: {subtype}"
+                )))
             }
         }
     }
@@ -498,19 +512,18 @@ async fn read_loop(
                 let response = message.get("response").cloned().unwrap_or(Value::Null);
                 if let Some(request_id) = response.get("request_id").and_then(Value::as_str) {
                     if let Some(tx) = shared.pending.lock().await.remove(request_id) {
-                        let result = if response.get("subtype").and_then(Value::as_str)
-                            == Some("error")
-                        {
-                            Err(Error::connection(
-                                response
-                                    .get("error")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("Unknown error")
-                                    .to_string(),
-                            ))
-                        } else {
-                            Ok(response.clone())
-                        };
+                        let result =
+                            if response.get("subtype").and_then(Value::as_str) == Some("error") {
+                                Err(Error::connection(
+                                    response
+                                        .get("error")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("Unknown error")
+                                        .to_string(),
+                                ))
+                            } else {
+                                Ok(response.clone())
+                            };
                         let _ = tx.send(result);
                     }
                 }
@@ -532,7 +545,11 @@ async fn read_loop(
                     let errors: Vec<String> = message
                         .get("errors")
                         .and_then(Value::as_array)
-                        .map(|a| a.iter().filter_map(|e| e.as_str().map(str::to_string)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|e| e.as_str().map(str::to_string))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     last_error_result_text = Some(if errors.is_empty() {
                         message
@@ -642,13 +659,34 @@ async fn handle_can_use_tool(shared: &Arc<Shared>, request_data: &Value) -> Resu
         .unwrap_or_default();
     let context = ToolPermissionContext {
         suggestions,
-        tool_use_id: request_data.get("tool_use_id").and_then(Value::as_str).map(str::to_string),
-        agent_id: request_data.get("agent_id").and_then(Value::as_str).map(str::to_string),
-        blocked_path: request_data.get("blocked_path").and_then(Value::as_str).map(str::to_string),
-        decision_reason: request_data.get("decision_reason").and_then(Value::as_str).map(str::to_string),
-        title: request_data.get("title").and_then(Value::as_str).map(str::to_string),
-        display_name: request_data.get("display_name").and_then(Value::as_str).map(str::to_string),
-        description: request_data.get("description").and_then(Value::as_str).map(str::to_string),
+        tool_use_id: request_data
+            .get("tool_use_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        agent_id: request_data
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        blocked_path: request_data
+            .get("blocked_path")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        decision_reason: request_data
+            .get("decision_reason")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        title: request_data
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        display_name: request_data
+            .get("display_name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        description: request_data
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     };
 
     let result = can_use_tool(tool_name, original_input.clone(), context).await?;
@@ -685,10 +723,9 @@ async fn handle_hook_callback(shared: &Arc<Shared>, request_data: &Value) -> Res
         .get("callback_id")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::connection("hook_callback missing callback_id"))?;
-    let callback = shared
-        .hook_callbacks
-        .get(callback_id)
-        .ok_or_else(|| Error::connection(format!("No hook callback found for ID: {callback_id}")))?;
+    let callback = shared.hook_callbacks.get(callback_id).ok_or_else(|| {
+        Error::connection(format!("No hook callback found for ID: {callback_id}"))
+    })?;
 
     let input_value = request_data.get("input").cloned().unwrap_or(Value::Null);
     let input: HookInput = serde_json::from_value(input_value)

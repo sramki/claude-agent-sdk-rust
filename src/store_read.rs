@@ -29,8 +29,7 @@ use crate::types::{
 
 /// Transcript entry types kept when filtering store entries (mirrors the
 /// reader's `TRANSCRIPT_ENTRY_TYPES`).
-const TRANSCRIPT_ENTRY_TYPES: [&str; 5] =
-    ["user", "assistant", "progress", "system", "attachment"];
+const TRANSCRIPT_ENTRY_TYPES: [&str; 5] = ["user", "assistant", "progress", "system", "attachment"];
 
 /// Max concurrent per-session `load()`s during a store listing. Mirrors
 /// `_STORE_LIST_LOAD_CONCURRENCY`.
@@ -91,7 +90,11 @@ fn mtime_from_jsonl_tail(jsonl: &str) -> i64 {
     };
     serde_json::from_str::<Value>(last_line)
         .ok()
-        .and_then(|v| v.get("timestamp").and_then(Value::as_str).map(str::to_string))
+        .and_then(|v| {
+            v.get("timestamp")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .and_then(|ts| parse_iso_to_epoch_ms(&ts))
         .unwrap_or_else(now_ms)
 }
@@ -247,7 +250,7 @@ async fn list_from_summaries(
         let sid = &s.session_id;
         if has_list_sessions {
             match known_mtimes.get(sid) {
-                None => continue,                      // no longer listed — drop
+                None => continue,                            // no longer listed — drop
                 Some(&known) if s.mtime < known => continue, // stale — gap-fill
                 _ => {}
             }
@@ -302,8 +305,10 @@ async fn list_from_summaries(
         .collect();
     if !to_fill.is_empty() {
         let filled = derive_infos_via_load(store, &to_fill, directory, project_path).await;
-        let by_sid: HashMap<String, SessionInfo> =
-            filled.into_iter().map(|f| (f.session_id.clone(), f)).collect();
+        let by_sid: HashMap<String, SessionInfo> = filled
+            .into_iter()
+            .map(|f| (f.session_id.clone(), f))
+            .collect();
         for slot in slots.iter_mut().filter(|s| s.info.is_none()) {
             if let Some(sid) = &slot.session_id {
                 slot.info = by_sid.get(sid).cloned();
@@ -330,7 +335,11 @@ pub async fn get_session_info_from_store(
     };
     let lite = jsonl_to_lite(&jsonl, mtime_from_jsonl_tail(&jsonl));
     let project_path = project_path_for(directory);
-    Ok(parse_session_info_from_lite(session_id, &lite, Some(&project_path)))
+    Ok(parse_session_info_from_lite(
+        session_id,
+        &lite,
+        Some(&project_path),
+    ))
 }
 
 /// Reads a session's conversation messages from a [`SessionStore`]. Store-backed

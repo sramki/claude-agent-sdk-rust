@@ -33,7 +33,10 @@ async fn connect_reports_missing_working_directory() {
         ..Default::default()
     };
     let mut transport = SubprocessCliTransport::new(options);
-    let err = transport.connect().await.expect_err("missing cwd should fail");
+    let err = transport
+        .connect()
+        .await
+        .expect_err("missing cwd should fail");
     match err {
         Error::Connection(msg) => assert!(
             msg.contains("Working directory does not exist"),

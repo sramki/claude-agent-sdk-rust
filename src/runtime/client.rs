@@ -161,9 +161,8 @@ impl Client {
     /// Gets the current context-usage breakdown.
     pub async fn get_context_usage(&self) -> Result<ContextUsageResponse> {
         let raw = self.query_ref()?.get_context_usage().await?;
-        serde_json::from_value(raw).map_err(|e| {
-            Error::message_parse(format!("Invalid context_usage response: {e}"), None)
-        })
+        serde_json::from_value(raw)
+            .map_err(|e| Error::message_parse(format!("Invalid context_usage response: {e}"), None))
     }
 
     /// Returns the server initialization info captured during connect.

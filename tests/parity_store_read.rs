@@ -6,9 +6,10 @@ use serde_json::{json, Map, Value};
 
 use claude_agent_sdk_rs::types::{SessionKey, SessionStore, SessionStoreEntry};
 use claude_agent_sdk_rs::{
-    get_session_info_from_store, get_session_messages_from_store, get_subagent_messages_from_store,
-    list_sessions_from_store, list_subagents_from_store, project_key_for_directory,
-    InMemorySessionStore, Result,
+    delete_session_via_store, fork_session_via_store, get_session_info_from_store,
+    get_session_messages_from_store, get_subagent_messages_from_store, list_sessions_from_store,
+    list_subagents_from_store, project_key_for_directory, rename_session_via_store,
+    tag_session_via_store, InMemorySessionStore, Result,
 };
 use std::path::Path;
 
@@ -129,7 +130,9 @@ async fn lists_seeded_sessions_sorted_by_mtime() {
     seed_chain(&store, &b, 1, 0x2000).await;
     seed_chain(&store, &c, 1, 0x3000).await;
 
-    let sessions = list_sessions_from_store(&store, dir(), None, 0).await.unwrap();
+    let sessions = list_sessions_from_store(&store, dir(), None, 0)
+        .await
+        .unwrap();
     let ids: Vec<&str> = sessions.iter().map(|s| s.session_id.as_str()).collect();
     assert_eq!(ids, vec![c.as_str(), b.as_str(), a.as_str()]); // newest first
     assert_eq!(sessions[0].summary, "prompt 0");
@@ -141,9 +144,13 @@ async fn list_limit_and_offset() {
     for i in 0..5u64 {
         seed_chain(&store, &new_uuid(0x100 + i), 1, 0x1000 + i * 100).await;
     }
-    let page = list_sessions_from_store(&store, dir(), Some(2), 0).await.unwrap();
+    let page = list_sessions_from_store(&store, dir(), Some(2), 0)
+        .await
+        .unwrap();
     assert_eq!(page.len(), 2);
-    let page2 = list_sessions_from_store(&store, dir(), Some(2), 2).await.unwrap();
+    let page2 = list_sessions_from_store(&store, dir(), Some(2), 2)
+        .await
+        .unwrap();
     assert_eq!(page2.len(), 2);
     assert!(page[0].last_modified >= page2[0].last_modified);
 }
@@ -151,7 +158,9 @@ async fn list_limit_and_offset() {
 #[tokio::test]
 async fn list_raises_when_store_lacks_list_sessions() {
     let store = MinimalStore::default();
-    let err = list_sessions_from_store(&store, dir(), None, 0).await.unwrap_err();
+    let err = list_sessions_from_store(&store, dir(), None, 0)
+        .await
+        .unwrap_err();
     assert!(matches!(err, claude_agent_sdk_rs::Error::Invalid(_)));
 }
 
@@ -173,7 +182,9 @@ async fn list_drops_sidechain_sessions() {
         .await
         .unwrap();
 
-    let sessions = list_sessions_from_store(&store, dir(), None, 0).await.unwrap();
+    let sessions = list_sessions_from_store(&store, dir(), None, 0)
+        .await
+        .unwrap();
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].session_id, normal);
 }
@@ -186,7 +197,10 @@ async fn info_returns_seeded_and_none_for_unknown() {
     let sid = new_uuid(0x100);
     seed_chain(&store, &sid, 1, 0x1000).await;
 
-    let info = get_session_info_from_store(&store, &sid, dir()).await.unwrap().unwrap();
+    let info = get_session_info_from_store(&store, &sid, dir())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(info.session_id, sid);
     assert_eq!(info.summary, "prompt 0");
 
@@ -208,12 +222,17 @@ async fn info_reflects_custom_title_and_cwd_fallback() {
     store
         .append(
             &key(&sid),
-            &[entry(json!({"type": "custom-title", "customTitle": "My Title", "sessionId": sid}))],
+            &[entry(
+                json!({"type": "custom-title", "customTitle": "My Title", "sessionId": sid}),
+            )],
         )
         .await
         .unwrap();
 
-    let info = get_session_info_from_store(&store, &sid, dir()).await.unwrap().unwrap();
+    let info = get_session_info_from_store(&store, &sid, dir())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(info.summary, "My Title");
     assert_eq!(info.custom_title.as_deref(), Some("My Title"));
     // Entries lack cwd -> falls back to the canonicalized project directory.
@@ -239,20 +258,26 @@ async fn messages_chain_in_order_and_ignores_metadata() {
         .await
         .unwrap();
 
-    let msgs = get_session_messages_from_store(&store, &sid, dir(), None, 0).await.unwrap();
+    let msgs = get_session_messages_from_store(&store, &sid, dir(), None, 0)
+        .await
+        .unwrap();
     let ids: Vec<&str> = msgs.iter().map(|m| m.uuid.as_str()).collect();
     assert_eq!(ids, uuids.iter().map(String::as_str).collect::<Vec<_>>());
 
     // limit/offset
-    let page = get_session_messages_from_store(&store, &sid, dir(), Some(2), 1).await.unwrap();
+    let page = get_session_messages_from_store(&store, &sid, dir(), Some(2), 1)
+        .await
+        .unwrap();
     assert_eq!(page.len(), 2);
     assert_eq!(page[0].uuid, uuids[1]);
 
     // unknown session -> empty
-    assert!(get_session_messages_from_store(&store, &new_uuid(0x999), dir(), None, 0)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        get_session_messages_from_store(&store, &new_uuid(0x999), dir(), None, 0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 // --- subagents ----------------------------------------------------------------
@@ -274,10 +299,14 @@ async fn list_and_get_subagent_messages() {
         .await
         .unwrap();
 
-    let subs = list_subagents_from_store(&store, &sid, dir()).await.unwrap();
+    let subs = list_subagents_from_store(&store, &sid, dir())
+        .await
+        .unwrap();
     assert_eq!(subs, vec!["abc"]);
 
-    let msgs = get_subagent_messages_from_store(&store, &sid, "abc", dir(), None, 0).await.unwrap();
+    let msgs = get_subagent_messages_from_store(&store, &sid, "abc", dir(), None, 0)
+        .await
+        .unwrap();
     assert_eq!(msgs.len(), 2);
     assert_eq!(msgs[0].uuid, u);
 }
@@ -300,8 +329,15 @@ async fn nested_workflow_subpath_and_agent_metadata_filtered() {
         .await
         .unwrap();
 
-    assert_eq!(list_subagents_from_store(&store, &sid, dir()).await.unwrap(), vec!["deep"]);
-    let msgs = get_subagent_messages_from_store(&store, &sid, "deep", dir(), None, 0).await.unwrap();
+    assert_eq!(
+        list_subagents_from_store(&store, &sid, dir())
+            .await
+            .unwrap(),
+        vec!["deep"]
+    );
+    let msgs = get_subagent_messages_from_store(&store, &sid, "deep", dir(), None, 0)
+        .await
+        .unwrap();
     assert_eq!(msgs.len(), 2); // agent_metadata dropped
 }
 
@@ -310,25 +346,46 @@ async fn list_subagents_dedupes_across_subpaths() {
     let store = InMemorySessionStore::new();
     let sid = new_uuid(0x100);
     seed_chain(&store, &sid, 1, 0x1000).await;
-    store.append(&subkey(&sid, "subagents/agent-x"), &[user("a", &new_uuid(0x7001), None, &sid)]).await.unwrap();
-    store.append(&subkey(&sid, "subagents/workflows/r/agent-x"), &[user("b", &new_uuid(0x7002), None, &sid)]).await.unwrap();
-    let subs = list_subagents_from_store(&store, &sid, dir()).await.unwrap();
+    store
+        .append(
+            &subkey(&sid, "subagents/agent-x"),
+            &[user("a", &new_uuid(0x7001), None, &sid)],
+        )
+        .await
+        .unwrap();
+    store
+        .append(
+            &subkey(&sid, "subagents/workflows/r/agent-x"),
+            &[user("b", &new_uuid(0x7002), None, &sid)],
+        )
+        .await
+        .unwrap();
+    let subs = list_subagents_from_store(&store, &sid, dir())
+        .await
+        .unwrap();
     assert_eq!(subs, vec!["x"]); // deduped
 }
 
 #[tokio::test]
 async fn subagent_helpers_non_uuid_and_missing_list_subkeys() {
     let store = InMemorySessionStore::new();
-    assert!(list_subagents_from_store(&store, "not-a-uuid", dir()).await.unwrap().is_empty());
-    assert!(get_subagent_messages_from_store(&store, "not-a-uuid", "a", dir(), None, 0)
+    assert!(list_subagents_from_store(&store, "not-a-uuid", dir())
         .await
         .unwrap()
         .is_empty());
+    assert!(
+        get_subagent_messages_from_store(&store, "not-a-uuid", "a", dir(), None, 0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     // A store without list_subkeys -> list raises, but get falls back to the direct path.
     let minimal = MinimalStore::default();
     let sid = new_uuid(0x100);
-    let err = list_subagents_from_store(&minimal, &sid, dir()).await.unwrap_err();
+    let err = list_subagents_from_store(&minimal, &sid, dir())
+        .await
+        .unwrap_err();
     assert!(matches!(err, claude_agent_sdk_rs::Error::Invalid(_)));
 
     let (u, a) = (new_uuid(0x8001), new_uuid(0x8002));
@@ -343,4 +400,120 @@ async fn subagent_helpers_non_uuid_and_missing_list_subkeys() {
         .await
         .unwrap();
     assert_eq!(msgs.len(), 2); // direct-path fallback
+}
+
+// --- *_via_store mutations ----------------------------------------------------
+
+#[tokio::test]
+async fn rename_via_store_appends_trimmed_custom_title() {
+    let store = InMemorySessionStore::new();
+    let sid = new_uuid(0x100);
+    seed_chain(&store, &sid, 1, 0x1000).await;
+
+    rename_session_via_store(&store, &sid, "  New Title  ", dir()).await.unwrap();
+
+    let entries = store.get_entries(&key(&sid));
+    let last = entries.last().unwrap();
+    assert_eq!(last["type"], "custom-title");
+    assert_eq!(last["customTitle"], "New Title");
+    assert_eq!(last["sessionId"], sid);
+    assert!(last["uuid"].is_string());
+    assert!(last["timestamp"].is_string());
+}
+
+#[tokio::test]
+async fn rename_via_store_invalid_inputs_raise() {
+    let store = InMemorySessionStore::new();
+    assert!(rename_session_via_store(&store, "not-a-uuid", "t", dir()).await.is_err());
+    assert!(rename_session_via_store(&store, &new_uuid(0x1), "  ", dir()).await.is_err());
+}
+
+#[tokio::test]
+async fn tag_via_store_append_clear_and_reflected() {
+    let store = InMemorySessionStore::new();
+    let sid = new_uuid(0x100);
+    seed_chain(&store, &sid, 1, 0x1000).await;
+
+    tag_session_via_store(&store, &sid, Some("experiment"), dir()).await.unwrap();
+    let last = store.get_entries(&key(&sid)).last().unwrap().clone();
+    assert_eq!(last["type"], "tag");
+    assert_eq!(last["tag"], "experiment");
+
+    // Reflected through the store reader.
+    let info = get_session_info_from_store(&store, &sid, dir()).await.unwrap().unwrap();
+    assert_eq!(info.tag.as_deref(), Some("experiment"));
+
+    // None clears (empty-string tag entry).
+    tag_session_via_store(&store, &sid, None, dir()).await.unwrap();
+    let last = store.get_entries(&key(&sid)).last().unwrap().clone();
+    assert_eq!(last["tag"], "");
+    let info = get_session_info_from_store(&store, &sid, dir()).await.unwrap().unwrap();
+    assert_eq!(info.tag, None);
+}
+
+#[tokio::test]
+async fn delete_via_store_removes_and_noop_without_delete() {
+    let store = InMemorySessionStore::new();
+    let sid = new_uuid(0x100);
+    seed_chain(&store, &sid, 1, 0x1000).await;
+    assert_eq!(store.size(), 1);
+    delete_session_via_store(&store, &sid, dir()).await.unwrap();
+    assert_eq!(store.size(), 0);
+
+    // A store without delete() -> no-op (no error).
+    let minimal = MinimalStore::default();
+    delete_session_via_store(&minimal, &new_uuid(0x2), dir()).await.unwrap();
+
+    // Non-UUID is rejected without touching the store.
+    assert!(delete_session_via_store(&store, "not-a-uuid", dir()).await.is_err());
+    assert!(tag_session_via_store(&store, "not-a-uuid", Some("x"), dir()).await.is_err());
+}
+
+#[tokio::test]
+async fn fork_via_store_round_trips_with_new_uuids() {
+    let store = InMemorySessionStore::new();
+    let sid = new_uuid(0x100);
+    let src = seed_chain(&store, &sid, 2, 0x1000).await;
+
+    let result = fork_session_via_store(&store, &sid, dir(), None, None).await.unwrap();
+    assert_ne!(result.session_id, sid);
+
+    let forked = store.get_entries(&key(&result.session_id));
+    let msg_entries: Vec<_> = forked
+        .iter()
+        .filter(|e| matches!(e["type"].as_str(), Some("user") | Some("assistant")))
+        .collect();
+    assert_eq!(msg_entries.len(), 4);
+    // Fresh UUIDs — none of the source uuids reappear.
+    for e in &msg_entries {
+        assert!(!src.contains(&e["uuid"].as_str().unwrap().to_string()));
+    }
+    // A custom-title trailer with "(fork)" is appended.
+    assert!(forked.iter().any(|e| e["type"] == "custom-title"
+        && e["customTitle"].as_str().unwrap().ends_with("(fork)")));
+
+    // The fork is readable via the store reader.
+    let msgs = get_session_messages_from_store(&store, &result.session_id, dir(), None, 0)
+        .await
+        .unwrap();
+    assert_eq!(msgs.len(), 4);
+}
+
+#[tokio::test]
+async fn fork_via_store_up_to_and_errors() {
+    let store = InMemorySessionStore::new();
+    let sid = new_uuid(0x100);
+    let src = seed_chain(&store, &sid, 3, 0x1000).await;
+
+    // Fork up to the 2nd message (index 1) -> 2 conversation messages.
+    let result = fork_session_via_store(&store, &sid, dir(), Some(&src[1]), None).await.unwrap();
+    let msgs = get_session_messages_from_store(&store, &result.session_id, dir(), None, 0)
+        .await
+        .unwrap();
+    assert_eq!(msgs.len(), 2);
+
+    // Not found + invalid ids.
+    assert!(fork_session_via_store(&store, &new_uuid(0x999), dir(), None, None).await.is_err());
+    assert!(fork_session_via_store(&store, "not-a-uuid", dir(), None, None).await.is_err());
+    assert!(fork_session_via_store(&store, &sid, dir(), Some("bad"), None).await.is_err());
 }

@@ -169,7 +169,10 @@ fn rename_empty_title() {
     write_session(&pd, &sid, "hi");
     for bad in ["", "   ", "\n\t"] {
         assert!(
-            matches!(rename_session(&sid, bad, Some(&project)), Err(Error::Invalid(_))),
+            matches!(
+                rename_session(&sid, bad, Some(&project)),
+                Err(Error::Invalid(_))
+            ),
             "title {bad:?} should be rejected"
         );
     }
@@ -266,7 +269,10 @@ fn rename_skips_zero_byte_stub() {
 
     rename_session(&sid, "New Title", None).unwrap();
 
-    assert_eq!(fs::read_to_string(proj_a.join(format!("{sid}.jsonl"))).unwrap(), "");
+    assert_eq!(
+        fs::read_to_string(proj_a.join(format!("{sid}.jsonl"))).unwrap(),
+        ""
+    );
     let real = fs::read_to_string(proj_z.join(format!("{sid}.jsonl"))).unwrap();
     assert!(real.contains(r#""customTitle":"New Title""#));
 }
@@ -316,7 +322,10 @@ fn tag_empty_tag() {
     write_session(&pd, &sid, "hi");
     for bad in ["", "   "] {
         assert!(
-            matches!(tag_session(&sid, Some(bad), Some(&project)), Err(Error::Invalid(_))),
+            matches!(
+                tag_session(&sid, Some(bad), Some(&project)),
+                Err(Error::Invalid(_))
+            ),
             "tag {bad:?} should be rejected"
         );
     }
@@ -416,7 +425,10 @@ fn tag_compact_json_format() {
 
     let content = fs::read_to_string(pd.join(format!("{sid}.jsonl"))).unwrap();
     let last = content.trim().lines().last().unwrap();
-    assert_eq!(last, format!(r#"{{"type":"tag","tag":"mytag","sessionId":"{sid}"}}"#));
+    assert_eq!(
+        last,
+        format!(r#"{{"type":"tag","tag":"mytag","sessionId":"{sid}"}}"#)
+    );
 }
 
 #[test]
@@ -472,7 +484,11 @@ fn delete_removes_subagent_transcript_dir() {
     write_session(&pd, &sid, "hi");
     let subagent_dir = pd.join(&sid);
     fs::create_dir(&subagent_dir).unwrap();
-    fs::write(subagent_dir.join(format!("{}.jsonl", new_uuid(0x3099))), "{}\n").unwrap();
+    fs::write(
+        subagent_dir.join(format!("{}.jsonl", new_uuid(0x3099))),
+        "{}\n",
+    )
+    .unwrap();
 
     delete_session(&sid, Some(&project)).unwrap();
 
@@ -652,7 +668,10 @@ fn fork_filters_sidechains() {
 
     let result = fork_session(&sid, Some(&project), None, None).unwrap();
     let content = fs::read_to_string(pd.join(format!("{}.jsonl", result.session_id))).unwrap();
-    assert!(!content.contains("SIDECHAIN_MARKER"), "sidechain entry leaked into fork");
+    assert!(
+        !content.contains("SIDECHAIN_MARKER"),
+        "sidechain entry leaked into fork"
+    );
     let convo = read_lines(&pd.join(format!("{}.jsonl", result.session_id)))
         .into_iter()
         .filter(|e| matches!(e["type"].as_str(), Some("user") | Some("assistant")))

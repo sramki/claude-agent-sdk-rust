@@ -131,7 +131,12 @@ pub(crate) fn command_name(s: &str) -> Option<String> {
 /// Matches the auto-generated / system message patterns skipped when hunting
 /// for the first meaningful prompt. Mirrors `_SKIP_FIRST_PROMPT_PATTERN`.
 pub(crate) fn matches_skip_first_prompt(s: &str) -> bool {
-    for prefix in ["<local-command-stdout>", "<session-start-hook>", "<tick>", "<goal>"] {
+    for prefix in [
+        "<local-command-stdout>",
+        "<session-start-hook>",
+        "<tick>",
+        "<goal>",
+    ] {
         if s.starts_with(prefix) {
             return true;
         }
@@ -487,15 +492,24 @@ mod tests {
     #[test]
     fn extract_json_string_field_simple() {
         let text = r#"{"foo":"bar","baz":"qux"}"#;
-        assert_eq!(extract_json_string_field(text, "foo").as_deref(), Some("bar"));
-        assert_eq!(extract_json_string_field(text, "baz").as_deref(), Some("qux"));
+        assert_eq!(
+            extract_json_string_field(text, "foo").as_deref(),
+            Some("bar")
+        );
+        assert_eq!(
+            extract_json_string_field(text, "baz").as_deref(),
+            Some("qux")
+        );
         assert_eq!(extract_json_string_field(text, "missing"), None);
     }
 
     #[test]
     fn extract_json_string_field_with_space() {
         let text = r#"{"foo": "bar"}"#;
-        assert_eq!(extract_json_string_field(text, "foo").as_deref(), Some("bar"));
+        assert_eq!(
+            extract_json_string_field(text, "foo").as_deref(),
+            Some("bar")
+        );
     }
 
     #[test]
@@ -556,9 +570,10 @@ mod tests {
 
     #[test]
     fn first_prompt_command_fallback() {
-        let head = r#"{"type":"user","message":{"content":"<command-name>/help</command-name>stuff"}}"#
-            .to_string()
-            + "\n";
+        let head =
+            r#"{"type":"user","message":{"content":"<command-name>/help</command-name>stuff"}}"#
+                .to_string()
+                + "\n";
         assert_eq!(extract_first_prompt_from_head(&head), "/help");
     }
 

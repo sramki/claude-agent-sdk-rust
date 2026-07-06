@@ -174,7 +174,11 @@ pub struct McpServerStatus {
     /// Current connection status.
     pub status: McpServerConnectionStatus,
     /// Server info from the handshake (when connected).
-    #[serde(rename = "serverInfo", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "serverInfo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub server_info: Option<McpServerInfo>,
     /// Error message (when failed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,7 +212,11 @@ pub struct ContextUsageCategory {
     /// Display color.
     pub color: String,
     /// Whether this category is deferred.
-    #[serde(rename = "isDeferred", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "isDeferred",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub is_deferred: Option<bool>,
 }
 

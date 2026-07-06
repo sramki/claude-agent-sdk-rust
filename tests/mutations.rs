@@ -100,7 +100,10 @@ fn rename_rejects_missing_session() {
     let _c = claude_config_dir();
     let sid = new_uuid(0x2002);
     let err = rename_session(&sid, "x", None).unwrap_err();
-    assert!(matches!(err, claude_agent_sdk_rs::Error::SessionNotFound(_)));
+    assert!(matches!(
+        err,
+        claude_agent_sdk_rs::Error::SessionNotFound(_)
+    ));
 }
 
 #[test]
@@ -114,9 +117,14 @@ fn delete_removes_session() {
     let sid = new_uuid(0x3003);
     write_session(&pd, &sid, "to delete");
 
-    assert_eq!(list_sessions(Some(&project), None, 0, false).unwrap().len(), 1);
+    assert_eq!(
+        list_sessions(Some(&project), None, 0, false).unwrap().len(),
+        1
+    );
     delete_session(&sid, Some(&project)).unwrap();
-    assert!(list_sessions(Some(&project), None, 0, false).unwrap().is_empty());
+    assert!(list_sessions(Some(&project), None, 0, false)
+        .unwrap()
+        .is_empty());
     assert!(get_session_info(&sid, Some(&project)).unwrap().is_none());
 }
 
@@ -140,7 +148,11 @@ fn fork_creates_new_readable_session() {
     let fork = get_session_info(&result.session_id, Some(&project))
         .unwrap()
         .unwrap();
-    assert!(fork.summary.ends_with("(fork)"), "summary: {}", fork.summary);
+    assert!(
+        fork.summary.ends_with("(fork)"),
+        "summary: {}",
+        fork.summary
+    );
 
     // With an explicit title, that title surfaces verbatim.
     let titled = fork_session(&sid, Some(&project), None, Some("Custom Fork")).unwrap();
@@ -151,7 +163,12 @@ fn fork_creates_new_readable_session() {
 }
 
 fn write_multi_turn(pd: &Path, sid: &str) -> (String, String, String, String) {
-    let (u1, a1, u2, a2) = (new_uuid(0xB1), new_uuid(0xB2), new_uuid(0xB3), new_uuid(0xB4));
+    let (u1, a1, u2, a2) = (
+        new_uuid(0xB1),
+        new_uuid(0xB2),
+        new_uuid(0xB3),
+        new_uuid(0xB4),
+    );
     let body = [
         serde_json::json!({"type":"user","uuid":u1,"parentUuid":null,"sessionId":sid,"message":{"role":"user","content":"one"}}),
         serde_json::json!({"type":"assistant","uuid":a1,"parentUuid":u1,"sessionId":sid,"message":{"role":"assistant","content":"1"}}),
@@ -180,8 +197,9 @@ fn fork_up_to_message_truncates() {
 
     // Fork only up to the first assistant turn: the fork has 2 conversation msgs.
     let result = fork_session(&sid, Some(&project), Some(&a1), None).unwrap();
-    let msgs = claude_agent_sdk_rs::get_session_messages(&result.session_id, Some(&project), None, 0)
-        .unwrap();
+    let msgs =
+        claude_agent_sdk_rs::get_session_messages(&result.session_id, Some(&project), None, 0)
+            .unwrap();
     assert_eq!(msgs.len(), 2);
     // Fresh UUIDs — not the originals.
     assert!(!msgs.iter().any(|m| m.uuid == u1 || m.uuid == a1));

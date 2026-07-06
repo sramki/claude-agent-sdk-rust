@@ -136,9 +136,7 @@ mod tests {
 
     #[test]
     fn text_block_roundtrips_with_tag() {
-        let block = ContentBlock::Text(TextBlock {
-            text: "hi".into(),
-        });
+        let block = ContentBlock::Text(TextBlock { text: "hi".into() });
         let v = serde_json::to_value(&block).unwrap();
         assert_eq!(v, json!({"type": "text", "text": "hi"}));
         let back: ContentBlock = serde_json::from_value(v).unwrap();

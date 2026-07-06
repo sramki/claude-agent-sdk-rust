@@ -230,8 +230,11 @@ impl PermissionUpdate {
                 .get("mode")
                 .and_then(|m| serde_json::from_value(m.clone()).ok()),
             directories: data.get("directories").and_then(|d| {
-                d.as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                d.as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
             }),
             destination: data
                 .get("destination")
@@ -294,7 +297,11 @@ pub enum PermissionResult {
 /// Mirrors the `CanUseTool` callable: `(tool_name, input, context) ->
 /// PermissionResult`.
 pub type CanUseTool = Arc<
-    dyn Fn(String, Map<String, Value>, ToolPermissionContext) -> BoxFuture<'static, Result<PermissionResult>>
+    dyn Fn(
+            String,
+            Map<String, Value>,
+            ToolPermissionContext,
+        ) -> BoxFuture<'static, Result<PermissionResult>>
         + Send
         + Sync,
 >;

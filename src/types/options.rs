@@ -197,7 +197,10 @@ impl std::fmt::Debug for ClaudeAgentOptions {
             .field("session_id", &self.session_id)
             .field("max_turns", &self.max_turns)
             .field("cwd", &self.cwd)
-            .field("can_use_tool", &self.can_use_tool.as_ref().map(|_| "<callback>"))
+            .field(
+                "can_use_tool",
+                &self.can_use_tool.as_ref().map(|_| "<callback>"),
+            )
             .field("hooks", &self.hooks.as_ref().map(|h| h.len()))
             .field("stderr", &self.stderr.as_ref().map(|_| "<callback>"))
             .field(

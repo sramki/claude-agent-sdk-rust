@@ -194,7 +194,10 @@ mod tests {
 
     #[test]
     fn sanitize_path_basic() {
-        assert_eq!(sanitize_path("/Users/foo/my-project"), "-Users-foo-my-project");
+        assert_eq!(
+            sanitize_path("/Users/foo/my-project"),
+            "-Users-foo-my-project"
+        );
         assert_eq!(sanitize_path("plugin:name:server"), "plugin-name-server");
     }
 

@@ -5,7 +5,7 @@
 //! typed metadata entries to the session JSONL; `delete_session` removes the
 //! file (and subagent dir); `fork_session` copies the transcript with fresh
 //! UUIDs. Directory resolution matches the reader. The `*_via_store` async
-//! variants are not ported here.
+//! variants run the same transforms against a [`SessionStore`].
 //!
 //! `serde_json`'s `preserve_order` feature keeps `type` first in emitted
 //! entries, which the reader's `{"type":"tag"` prefix scan relies on.
@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::error::{Error, Result};
 use crate::parse::{
@@ -22,6 +22,7 @@ use crate::parse::{
 use crate::paths::{
     canonicalize_path, find_project_dir, projects_dir, sanitize_path, validate_uuid, worktree_paths,
 };
+use crate::types::{SessionKey, SessionStore, SessionStoreEntry};
 
 const TRANSCRIPT_TYPES: [&str; 5] = ["user", "assistant", "attachment", "system", "progress"];
 
@@ -132,12 +133,177 @@ pub fn fork_session(
         session_id,
         up_to_message_id,
         title,
-        &content,
+        || derive_title_from_content(&content),
     )?;
 
     let fork_path = project_dir.join(format!("{forked_session_id}.jsonl"));
     write_new_file(&fork_path, &(lines.join("\n") + "\n"))?;
 
+    Ok(ForkSessionResult {
+        session_id: forked_session_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// SessionStore-backed mutations (*_via_store)
+// ---------------------------------------------------------------------------
+
+fn store_key(project_key: String, session_id: &str) -> SessionKey {
+    SessionKey {
+        project_key,
+        session_id: session_id.to_string(),
+        subpath: None,
+    }
+}
+
+/// Renames a session by appending a `custom-title` entry to a store. Async,
+/// store-backed counterpart to [`rename_session`]. Mirrors
+/// `rename_session_via_store`.
+pub async fn rename_session_via_store(
+    store: &dyn SessionStore,
+    session_id: &str,
+    title: &str,
+    directory: Option<&std::path::Path>,
+) -> Result<()> {
+    if !validate_uuid(session_id) {
+        return Err(Error::InvalidSessionId(session_id.to_string()));
+    }
+    let stripped = title.trim();
+    if stripped.is_empty() {
+        return Err(Error::Invalid("title must be non-empty".into()));
+    }
+    let project_key = project_key_for_directory(directory);
+    let entry = json!({
+        "type": "custom-title", "customTitle": stripped, "sessionId": session_id,
+        "uuid": uuid::Uuid::new_v4().to_string(), "timestamp": iso_now(),
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    store
+        .append(&store_key(project_key, session_id), &[entry])
+        .await
+}
+
+/// Tags a session (or clears with `None`) via a store. Async, store-backed
+/// counterpart to [`tag_session`]. Mirrors `tag_session_via_store`.
+pub async fn tag_session_via_store(
+    store: &dyn SessionStore,
+    session_id: &str,
+    tag: Option<&str>,
+    directory: Option<&std::path::Path>,
+) -> Result<()> {
+    if !validate_uuid(session_id) {
+        return Err(Error::InvalidSessionId(session_id.to_string()));
+    }
+    let tag_value: String = match tag {
+        None => String::new(),
+        Some(t) => {
+            let s = sanitize_unicode(t);
+            let s = s.trim();
+            if s.is_empty() {
+                return Err(Error::Invalid(
+                    "tag must be non-empty (use None to clear)".into(),
+                ));
+            }
+            s.to_string()
+        }
+    };
+    let project_key = project_key_for_directory(directory);
+    let entry = json!({
+        "type": "tag", "tag": tag_value, "sessionId": session_id,
+        "uuid": uuid::Uuid::new_v4().to_string(), "timestamp": iso_now(),
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    store
+        .append(&store_key(project_key, session_id), &[entry])
+        .await
+}
+
+/// Deletes a session from a store. Async, store-backed counterpart to
+/// [`delete_session`]. A no-op if the store does not implement `delete`
+/// (WORM/append-only backends). Mirrors `delete_session_via_store`.
+pub async fn delete_session_via_store(
+    store: &dyn SessionStore,
+    session_id: &str,
+    directory: Option<&std::path::Path>,
+) -> Result<()> {
+    if !validate_uuid(session_id) {
+        return Err(Error::InvalidSessionId(session_id.to_string()));
+    }
+    let project_key = project_key_for_directory(directory);
+    match store.delete(&store_key(project_key, session_id)).await {
+        Ok(()) => Ok(()),
+        Err(Error::Unsupported(_)) => Ok(()), // no-op for append-only stores
+        Err(e) => Err(e),
+    }
+}
+
+/// Forks a session with fresh UUIDs via a store, running the transform directly
+/// over the loaded entries. Async, store-backed counterpart to [`fork_session`].
+/// Mirrors `fork_session_via_store`.
+pub async fn fork_session_via_store(
+    store: &dyn SessionStore,
+    session_id: &str,
+    directory: Option<&std::path::Path>,
+    up_to_message_id: Option<&str>,
+    title: Option<&str>,
+) -> Result<ForkSessionResult> {
+    if !validate_uuid(session_id) {
+        return Err(Error::InvalidSessionId(session_id.to_string()));
+    }
+    if let Some(up) = up_to_message_id {
+        if !validate_uuid(up) {
+            return Err(Error::Invalid(format!("Invalid up_to_message_id: {up}")));
+        }
+    }
+    let project_key = project_key_for_directory(directory);
+    let loaded = store
+        .load(&store_key(project_key.clone(), session_id))
+        .await?;
+    let raw = match loaded {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            return Err(Error::SessionNotFound(format!(
+                "Session {session_id} not found"
+            )))
+        }
+    };
+
+    let mut transcript: Vec<Value> = Vec::new();
+    let mut content_replacements: Vec<Value> = Vec::new();
+    for e in &raw {
+        let etype = e.get("type").and_then(Value::as_str);
+        let has_uuid = e.get("uuid").and_then(Value::as_str).is_some();
+        if etype.is_some_and(|t| TRANSCRIPT_TYPES.contains(&t)) && has_uuid {
+            transcript.push(Value::Object(e.clone()));
+        } else if etype == Some("content-replacement")
+            && e.get("sessionId").and_then(Value::as_str) == Some(session_id)
+        {
+            if let Some(reps) = e.get("replacements").and_then(Value::as_array) {
+                content_replacements.extend(reps.iter().cloned());
+            }
+        }
+    }
+
+    let (forked_session_id, lines) = build_fork_lines(
+        transcript,
+        content_replacements,
+        session_id,
+        up_to_message_id,
+        title,
+        || derive_title_from_entries(&raw),
+    )?;
+
+    let entries: Vec<SessionStoreEntry> = lines
+        .iter()
+        .filter_map(|line| serde_json::from_str::<Map<String, Value>>(line).ok())
+        .collect();
+    store
+        .append(&store_key(project_key, &forked_session_id), &entries)
+        .await?;
     Ok(ForkSessionResult {
         session_id: forked_session_id,
     })
@@ -178,10 +344,13 @@ fn parse_fork_transcript(content: &[u8], session_id: &str) -> (Vec<Value>, Vec<V
     (transcript, content_replacements)
 }
 
-fn derive_title(content: &[u8]) -> Option<String> {
+/// Title derivation for the disk path: head/tail byte scan. Mirrors the disk
+/// `_derive_title` closure in `fork_session`.
+fn derive_title_from_content(content: &[u8]) -> Option<String> {
     let len = content.len();
     let head = String::from_utf8_lossy(&content[..len.min(LITE_READ_BUF_SIZE)]).into_owned();
-    let tail = String::from_utf8_lossy(&content[len.saturating_sub(LITE_READ_BUF_SIZE)..]).into_owned();
+    let tail =
+        String::from_utf8_lossy(&content[len.saturating_sub(LITE_READ_BUF_SIZE)..]).into_owned();
     extract_last_json_string_field(&tail, "customTitle")
         .or_else(|| extract_last_json_string_field(&head, "customTitle"))
         .or_else(|| extract_last_json_string_field(&tail, "aiTitle"))
@@ -196,15 +365,59 @@ fn derive_title(content: &[u8]) -> Option<String> {
         })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_fork_lines(
+/// Title derivation for the store path: scan already-parsed entries (last-wins
+/// customTitle/aiTitle, else first-prompt over re-serialized JSONL). Mirrors
+/// `_derive_title_from_entries`.
+fn derive_title_from_entries(raw: &[SessionStoreEntry]) -> Option<String> {
+    let mut custom: Option<String> = None;
+    let mut ai: Option<String> = None;
+    for e in raw {
+        if let Some(ct) = e
+            .get("customTitle")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            custom = Some(ct.to_string());
+        }
+        if let Some(at) = e
+            .get("aiTitle")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            ai = Some(at.to_string());
+        }
+    }
+    if custom.is_some() {
+        return custom;
+    }
+    if ai.is_some() {
+        return ai;
+    }
+    let jsonl: String = raw
+        .iter()
+        .map(|e| Value::Object(e.clone()).to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let p = extract_first_prompt_from_head(&jsonl);
+    if p.is_empty() {
+        None
+    } else {
+        Some(p)
+    }
+}
+
+fn build_fork_lines<F>(
     transcript: Vec<Value>,
     content_replacements: Vec<Value>,
     session_id: &str,
     up_to_message_id: Option<&str>,
     title: Option<&str>,
-    content: &[u8],
-) -> Result<(String, Vec<String>)> {
+    derive_title: F,
+) -> Result<(String, Vec<String>)>
+where
+    F: FnOnce() -> Option<String>,
+{
     // Filter out sidechains; keep isMeta entries.
     let mut transcript: Vec<Value> = transcript
         .into_iter()
@@ -338,7 +551,7 @@ fn build_fork_lines(
         Some(t) => t.to_string(),
         None => format!(
             "{} (fork)",
-            derive_title(content).unwrap_or_else(|| "Forked session".to_string())
+            derive_title().unwrap_or_else(|| "Forked session".to_string())
         ),
     };
     lines.push(
@@ -434,7 +647,9 @@ fn append_to_session(session_id: &str, data: &str, directory: Option<&Path>) -> 
     }
 
     let entries = std::fs::read_dir(projects_dir()).map_err(|_| {
-        Error::SessionNotFound(format!("Session {session_id} not found (no projects directory)"))
+        Error::SessionNotFound(format!(
+            "Session {session_id} not found (no projects directory)"
+        ))
     })?;
     for entry in entries.flatten() {
         if try_append(&entry.path().join(&file_name), data)? {

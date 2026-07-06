@@ -308,7 +308,10 @@ mod tests {
 
     #[test]
     fn effort_level_lowercase() {
-        assert_eq!(serde_json::to_value(EffortLevel::Xhigh).unwrap(), json!("xhigh"));
+        assert_eq!(
+            serde_json::to_value(EffortLevel::Xhigh).unwrap(),
+            json!("xhigh")
+        );
     }
 
     #[test]

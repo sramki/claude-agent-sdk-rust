@@ -109,13 +109,10 @@ impl Transport for MockTransport {
 #[tokio::test]
 async fn query_string_prompt_yields_assistant_and_result() {
     let (transport, written) = MockTransport::new();
-    let mut stream = query_with_transport(
-        "hello",
-        ClaudeAgentOptions::default(),
-        Box::new(transport),
-    )
-    .await
-    .expect("query starts");
+    let mut stream =
+        query_with_transport("hello", ClaudeAgentOptions::default(), Box::new(transport))
+            .await
+            .expect("query starts");
 
     let mut messages = Vec::new();
     while let Some(item) = stream.next().await {
@@ -272,10 +269,7 @@ impl Transport for ControlMock {
 }
 
 /// Polls the write log until `pred` matches or times out.
-async fn wait_written(
-    written: &Arc<Mutex<Vec<Value>>>,
-    pred: impl Fn(&Value) -> bool,
-) -> Value {
+async fn wait_written(written: &Arc<Mutex<Vec<Value>>>, pred: impl Fn(&Value) -> bool) -> Value {
     for _ in 0..400 {
         let found = {
             let w = written.lock().unwrap();
@@ -346,7 +340,10 @@ async fn hook_callback_dispatch() {
         })
     });
     let mut hooks = HashMap::new();
-    hooks.insert(HookEvent::PreToolUse, vec![HookMatcher::new(None, vec![cb])]);
+    hooks.insert(
+        HookEvent::PreToolUse,
+        vec![HookMatcher::new(None, vec![cb])],
+    );
     let options = ClaudeAgentOptions {
         hooks: Some(hooks),
         ..Default::default()
@@ -384,7 +381,10 @@ async fn mcp_message_dispatch_routes_to_sdk_server() {
         |_args| async move { Ok(json!({"content": [{"type": "text", "text": "hi"}]})) },
     );
     let mut servers = HashMap::new();
-    servers.insert("calc".to_string(), create_sdk_mcp_server("calc", "1.0.0", vec![greet]));
+    servers.insert(
+        "calc".to_string(),
+        create_sdk_mcp_server("calc", "1.0.0", vec![greet]),
+    );
     let options = ClaudeAgentOptions {
         mcp_servers: McpServers::Map(servers),
         ..Default::default()
@@ -425,7 +425,9 @@ async fn control_methods_send_and_resolve() {
     {
         let w = written.lock().unwrap();
         assert!(w.iter().any(|m| m["request"]["subtype"] == "interrupt"));
-        assert!(w.iter().any(|m| m["request"]["subtype"] == "set_permission_mode"));
+        assert!(w
+            .iter()
+            .any(|m| m["request"]["subtype"] == "set_permission_mode"));
         assert!(w.iter().any(|m| m["request"]["subtype"] == "stop_task"));
     }
     client.disconnect().await.unwrap();
@@ -524,7 +526,10 @@ async fn control_error_response_surfaces_error() {
     client.connect(None).await.expect("connect"); // initialize succeeds
 
     // A control op the CLI answers with an error must surface as Err.
-    let err = client.interrupt().await.expect_err("interrupt should error");
+    let err = client
+        .interrupt()
+        .await
+        .expect_err("interrupt should error");
     assert!(
         matches!(err, claude_agent_sdk_rs::Error::Connection(ref m) if m == "boom"),
         "unexpected error: {err:?}"

@@ -64,7 +64,10 @@ fn deduplicate_by_session_id(sessions: Vec<SessionInfo>) -> Vec<SessionInfo> {
             }
         }
     }
-    order.into_iter().filter_map(|id| by_id.remove(&id)).collect()
+    order
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect()
 }
 
 /// Sorts by `last_modified` descending (stable) and applies offset + limit.
@@ -153,7 +156,10 @@ fn list_sessions_for_project(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         seen_dirs.insert(base);
-        all_sessions.extend(read_sessions_from_dir(&canonical_project_dir, Some(&canonical)));
+        all_sessions.extend(read_sessions_from_dir(
+            &canonical_project_dir,
+            Some(&canonical),
+        ));
     }
 
     for entry in all_dirents {
@@ -385,10 +391,7 @@ pub fn list_sessions(
 /// session, or it has no extractable summary. Returns
 /// [`Error::InvalidSessionId`] if `session_id` is not a valid UUID. When
 /// `directory` is omitted, all project directories are searched.
-pub fn get_session_info(
-    session_id: &str,
-    directory: Option<&Path>,
-) -> Result<Option<SessionInfo>> {
+pub fn get_session_info(session_id: &str, directory: Option<&Path>) -> Result<Option<SessionInfo>> {
     if !validate_uuid(session_id) {
         return Err(Error::InvalidSessionId(session_id.to_string()));
     }
@@ -399,7 +402,11 @@ pub fn get_session_info(
 
         if let Some(project_dir) = find_project_dir(&canonical) {
             if let Some(lite) = read_session_lite(&project_dir.join(&file_name)) {
-                return Ok(parse_session_info_from_lite(session_id, &lite, Some(&canonical)));
+                return Ok(parse_session_info_from_lite(
+                    session_id,
+                    &lite,
+                    Some(&canonical),
+                ));
             }
         }
 

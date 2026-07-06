@@ -124,7 +124,13 @@ fn apply_skills_defaults(options: &ClaudeAgentOptions) -> (Vec<String>, Option<V
     let mut allowed_tools = options.allowed_tools.clone();
     let mut setting_sources: Option<Vec<String>> = options.setting_sources.as_ref().map(|ss| {
         ss.iter()
-            .map(|s| serde_json::to_value(s).unwrap().as_str().unwrap().to_string())
+            .map(|s| {
+                serde_json::to_value(s)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect()
     });
 
@@ -411,7 +417,11 @@ pub(crate) fn build_command(cli_path: &str, options: &ClaudeAgentOptions) -> Vec
 /// Finds the Claude Code CLI binary. Mirrors `_find_cli` (minus the bundled
 /// binary, which the Rust crate does not ship).
 pub(crate) fn find_cli() -> Result<String> {
-    let exe = if cfg!(windows) { "claude.exe" } else { "claude" };
+    let exe = if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    };
 
     // Search PATH.
     if let Some(paths) = std::env::var_os("PATH") {
@@ -497,8 +507,14 @@ impl SubprocessCliTransport {
     ///
     /// [`connect`]: Transport::connect
     pub fn new(options: ClaudeAgentOptions) -> Self {
-        let cli_path = options.cli_path.as_ref().map(|p| p.to_string_lossy().into_owned());
-        let cwd = options.cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let cli_path = options
+            .cli_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
+        let cwd = options
+            .cwd
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
         let max_buffer_size = options.max_buffer_size.unwrap_or(DEFAULT_MAX_BUFFER_SIZE);
         SubprocessCliTransport {
             options,
@@ -601,7 +617,12 @@ impl Transport for SubprocessCliTransport {
         // username resolution would need a passwd lookup). Mirrors the upstream
         // `user=` subprocess argument.
         #[cfg(unix)]
-        if let Some(uid) = self.options.user.as_deref().and_then(|u| u.parse::<u32>().ok()) {
+        if let Some(uid) = self
+            .options
+            .user
+            .as_deref()
+            .and_then(|u| u.parse::<u32>().ok())
+        {
             command.uid(uid);
         }
 
@@ -624,8 +645,7 @@ impl Transport for SubprocessCliTransport {
         let (tx, rx) = mpsc::channel::<Result<Value>>(1024);
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let max_buffer = self.max_buffer_size;
-        let reader_handle =
-            tokio::spawn(read_loop(child, stdout, shutdown_rx, max_buffer, tx));
+        let reader_handle = tokio::spawn(read_loop(child, stdout, shutdown_rx, max_buffer, tx));
 
         // Background stderr reader → callback.
         let stderr_handle = match (stderr, self.options.stderr.clone()) {
@@ -644,7 +664,9 @@ impl Transport for SubprocessCliTransport {
 
     async fn write(&mut self, data: &str) -> Result<()> {
         if !self.ready {
-            return Err(Error::connection("ProcessTransport is not ready for writing"));
+            return Err(Error::connection(
+                "ProcessTransport is not ready for writing",
+            ));
         }
         let stdin = self
             .stdin
@@ -878,8 +900,12 @@ mod tests {
     fn command_has_stream_json_and_input_format() {
         let cmd = build_command("/bin/claude", &base());
         assert_eq!(cmd[0], "/bin/claude");
-        assert!(cmd.windows(2).any(|w| w == ["--output-format", "stream-json"]));
-        assert!(cmd.windows(2).any(|w| w == ["--input-format", "stream-json"]));
+        assert!(cmd
+            .windows(2)
+            .any(|w| w == ["--output-format", "stream-json"]));
+        assert!(cmd
+            .windows(2)
+            .any(|w| w == ["--input-format", "stream-json"]));
         assert!(cmd.contains(&"--verbose".to_string()));
     }
 
@@ -905,7 +931,9 @@ mod tests {
         o.permission_mode = Some(PermissionMode::AcceptEdits);
         o.model = Some("claude-opus-4-5".into());
         let cmd = build_command("/bin/claude", &o);
-        assert!(cmd.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]));
+        assert!(cmd
+            .windows(2)
+            .any(|w| w == ["--permission-mode", "acceptEdits"]));
         assert!(cmd.windows(2).any(|w| w == ["--model", "claude-opus-4-5"]));
     }
 
@@ -915,7 +943,9 @@ mod tests {
         o.allowed_tools = vec!["Read".into(), "Write".into()];
         o.disallowed_tools = vec!["Bash".into()];
         let cmd = build_command("/bin/claude", &o);
-        assert!(cmd.windows(2).any(|w| w == ["--allowedTools", "Read,Write"]));
+        assert!(cmd
+            .windows(2)
+            .any(|w| w == ["--allowedTools", "Read,Write"]));
         assert!(cmd.windows(2).any(|w| w == ["--disallowedTools", "Bash"]));
     }
 
@@ -936,7 +966,9 @@ mod tests {
             display: None,
         });
         let cmd = build_command("/bin/claude", &o);
-        assert!(cmd.windows(2).any(|w| w == ["--max-thinking-tokens", "2048"]));
+        assert!(cmd
+            .windows(2)
+            .any(|w| w == ["--max-thinking-tokens", "2048"]));
     }
 
     #[test]
@@ -1039,15 +1071,25 @@ mod tests {
     fn task_budget_toggles() {
         let mut o = base();
         o.task_budget = Some(TaskBudget { total: 100_000 });
-        assert!(has_pair(&build_command("/c", &o), "--task-budget", "100000"));
-        assert!(!build_command("/c", &base()).iter().any(|a| a == "--task-budget"));
+        assert!(has_pair(
+            &build_command("/c", &o),
+            "--task-budget",
+            "100000"
+        ));
+        assert!(!build_command("/c", &base())
+            .iter()
+            .any(|a| a == "--task-budget"));
     }
 
     #[test]
     fn deprecated_max_thinking_tokens() {
         let mut o = base();
         o.max_thinking_tokens = Some(5000);
-        assert!(has_pair(&build_command("/c", &o), "--max-thinking-tokens", "5000"));
+        assert!(has_pair(
+            &build_command("/c", &o),
+            "--max-thinking-tokens",
+            "5000"
+        ));
     }
 
     #[test]
@@ -1060,11 +1102,18 @@ mod tests {
 
         let mut disabled = base();
         disabled.thinking = Some(ThinkingConfig::Disabled);
-        assert!(has_pair(&build_command("/c", &disabled), "--thinking", "disabled"));
+        assert!(has_pair(
+            &build_command("/c", &disabled),
+            "--thinking",
+            "disabled"
+        ));
 
         // thinking takes precedence over the deprecated max_thinking_tokens.
         let mut both = base();
-        both.thinking = Some(ThinkingConfig::Enabled { budget_tokens: 5000, display: None });
+        both.thinking = Some(ThinkingConfig::Enabled {
+            budget_tokens: 5000,
+            display: None,
+        });
         both.max_thinking_tokens = Some(999);
         let cmd = build_command("/c", &both);
         assert!(has_pair(&cmd, "--max-thinking-tokens", "5000"));
@@ -1074,19 +1123,31 @@ mod tests {
     #[test]
     fn thinking_display_forwarded_only_when_present() {
         let mut with = base();
-        with.thinking = Some(ThinkingConfig::Adaptive { display: Some(ThinkingDisplay::Summarized) });
-        assert!(has_pair(&build_command("/c", &with), "--thinking-display", "summarized"));
+        with.thinking = Some(ThinkingConfig::Adaptive {
+            display: Some(ThinkingDisplay::Summarized),
+        });
+        assert!(has_pair(
+            &build_command("/c", &with),
+            "--thinking-display",
+            "summarized"
+        ));
 
         let mut without = base();
         without.thinking = Some(ThinkingConfig::Adaptive { display: None });
-        assert!(!build_command("/c", &without).iter().any(|a| a == "--thinking-display"));
+        assert!(!build_command("/c", &without)
+            .iter()
+            .any(|a| a == "--thinking-display"));
     }
 
     #[test]
     fn tools_list_empty_preset_and_absent() {
         let mut list = base();
         list.tools = Some(ToolsConfig::List(vec!["Bash".into(), "Read".into()]));
-        assert!(has_pair(&build_command("/c", &list), "--tools", "Bash,Read"));
+        assert!(has_pair(
+            &build_command("/c", &list),
+            "--tools",
+            "Bash,Read"
+        ));
 
         let mut empty = base();
         empty.tools = Some(ToolsConfig::List(vec![]));
@@ -1094,7 +1155,11 @@ mod tests {
 
         let mut preset = base();
         preset.tools = Some(ToolsConfig::Preset);
-        assert!(has_pair(&build_command("/c", &preset), "--tools", "default"));
+        assert!(has_pair(
+            &build_command("/c", &preset),
+            "--tools",
+            "default"
+        ));
 
         assert!(!build_command("/c", &base()).iter().any(|a| a == "--tools"));
     }
@@ -1132,7 +1197,11 @@ mod tests {
 
         let mut path = base();
         path.mcp_servers = McpServers::Path("/cfg.json".into());
-        assert!(has_pair(&build_command("/c", &path), "--mcp-config", "/cfg.json"));
+        assert!(has_pair(
+            &build_command("/c", &path),
+            "--mcp-config",
+            "/cfg.json"
+        ));
     }
 
     #[test]
@@ -1191,7 +1260,10 @@ mod tests {
         // Agents are sent via the initialize control request, not a CLI flag.
         let mut o = base();
         let mut agents = HashMap::new();
-        agents.insert("helper".to_string(), AgentDefinition::new("A helper", "Be helpful"));
+        agents.insert(
+            "helper".to_string(),
+            AgentDefinition::new("A helper", "Be helpful"),
+        );
         o.agents = Some(agents);
         let cmd = build_command("/c", &o);
         assert!(!cmd.iter().any(|a| a == "--agents"));
@@ -1212,7 +1284,9 @@ mod tests {
     }
 
     fn oks(out: &[Result<Value>]) -> Vec<Value> {
-        out.iter().filter_map(|r| r.as_ref().ok().cloned()).collect()
+        out.iter()
+            .filter_map(|r| r.as_ref().ok().cloned())
+            .collect()
     }
 
     #[tokio::test]
@@ -1262,13 +1336,17 @@ mod tests {
     async fn framing_complete_corrupt_line_raises() {
         let out = pump(b"{\"n\":1}\n{bad json}\n", DEFAULT_MAX_BUFFER_SIZE).await;
         assert_eq!(oks(&out).len(), 1);
-        assert!(out.iter().any(|r| matches!(r, Err(Error::JsonDecode { .. }))));
+        assert!(out
+            .iter()
+            .any(|r| matches!(r, Err(Error::JsonDecode { .. }))));
     }
 
     #[tokio::test]
     async fn framing_oversized_line_raises() {
         // A complete line larger than the (tiny) buffer surfaces a decode error.
         let out = pump(b"{\"x\":\"aaaaaaaaaaaaaaaaaaaa\"}\n", 8).await;
-        assert!(out.iter().any(|r| matches!(r, Err(Error::JsonDecode { .. }))));
+        assert!(out
+            .iter()
+            .any(|r| matches!(r, Err(Error::JsonDecode { .. }))));
     }
 }

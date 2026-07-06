@@ -88,10 +88,7 @@ pub(crate) fn initialize_timeout() -> Duration {
 
 /// Extracts the SDK MCP servers, agent wire dicts, `excludeDynamicSections`,
 /// and explicit skills list from options for the `initialize` request.
-fn derive_query_config(
-    options: &ClaudeAgentOptions,
-    is_streaming_mode: bool,
-) -> QueryConfig {
+fn derive_query_config(options: &ClaudeAgentOptions, is_streaming_mode: bool) -> QueryConfig {
     let mut sdk_mcp_servers = HashMap::new();
     if let McpServers::Map(map) = &options.mcp_servers {
         for (name, config) in map {
@@ -205,7 +202,10 @@ pub(crate) async fn forward(item: Result<Value>, out: &mpsc::Sender<Result<Messa
 /// Returns a [`MessageStream`] of parsed messages. For interactive, stateful
 /// conversations use [`Client`](super::client::Client) instead. Faithful port
 /// of the public `query()`.
-pub async fn query(prompt: impl Into<Prompt>, options: ClaudeAgentOptions) -> Result<MessageStream> {
+pub async fn query(
+    prompt: impl Into<Prompt>,
+    options: ClaudeAgentOptions,
+) -> Result<MessageStream> {
     let prompt = prompt.into();
     let prompt_is_string = matches!(prompt, Prompt::Text(_));
     let query = setup_query(options, prompt_is_string, None).await?;

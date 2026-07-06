@@ -152,7 +152,10 @@ pub fn fold_session_summary(
             .and_then(parse_iso_to_epoch_ms);
 
         if !data.contains_key("is_sidechain") {
-            data.insert("is_sidechain".into(), Value::Bool(is_true(entry, "isSidechain")));
+            data.insert(
+                "is_sidechain".into(),
+                Value::Bool(is_true(entry, "isSidechain")),
+            );
         }
         if !data.contains_key("created_at") {
             if let Some(ms) = ms {
@@ -200,7 +203,11 @@ pub fn summary_entry_to_sdk_info(
         return None;
     }
 
-    let str_field = |k: &str| data.get(k).and_then(Value::as_str).filter(|s| !s.is_empty());
+    let str_field = |k: &str| {
+        data.get(k)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    };
 
     let first_prompt = if data.get("first_prompt_locked") == Some(&Value::Bool(true)) {
         str_field("first_prompt")
@@ -356,7 +363,11 @@ impl SessionStore for InMemorySessionStore {
     async fn append(&self, key: &SessionKey, entries: &[SessionStoreEntry]) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         let k = key_to_string(key);
-        inner.store.entry(k.clone()).or_default().extend_from_slice(entries);
+        inner
+            .store
+            .entry(k.clone())
+            .or_default()
+            .extend_from_slice(entries);
         let now_ms = Self::next_mtime(&mut inner);
         if key.subpath.is_none() {
             let sk = (key.project_key.clone(), key.session_id.clone());
@@ -370,7 +381,13 @@ impl SessionStore for InMemorySessionStore {
     }
 
     async fn load(&self, key: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
-        Ok(self.inner.lock().unwrap().store.get(&key_to_string(key)).cloned())
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .store
+            .get(&key_to_string(key))
+            .cloned())
     }
 
     async fn list_sessions(&self, project_key: &str) -> Result<Vec<SessionStoreListEntry>> {
@@ -390,10 +407,7 @@ impl SessionStore for InMemorySessionStore {
         Ok(results)
     }
 
-    async fn list_session_summaries(
-        &self,
-        project_key: &str,
-    ) -> Result<Vec<SessionSummaryEntry>> {
+    async fn list_session_summaries(&self, project_key: &str) -> Result<Vec<SessionSummaryEntry>> {
         Ok(self
             .inner
             .lock()
@@ -483,7 +497,12 @@ mod tests {
             .await
             .unwrap();
         store
-            .append(&k, &[entry(json!({"type": "custom-title", "customTitle": "My Title"}))])
+            .append(
+                &k,
+                &[entry(
+                    json!({"type": "custom-title", "customTitle": "My Title"}),
+                )],
+            )
             .await
             .unwrap();
 
@@ -498,14 +517,30 @@ mod tests {
     #[tokio::test]
     async fn delete_cascades_to_subkeys() {
         let store = InMemorySessionStore::new();
-        store.append(&key("p", "s"), &[entry(json!({"type": "user"}))]).await.unwrap();
+        store
+            .append(&key("p", "s"), &[entry(json!({"type": "user"}))])
+            .await
+            .unwrap();
         let sub = SessionKey {
             project_key: "p".into(),
             session_id: "s".into(),
             subpath: Some("subagents/agent-a".into()),
         };
-        store.append(&sub, &[entry(json!({"type": "user"}))]).await.unwrap();
-        assert_eq!(store.list_subkeys(&SessionListSubkeysKey { project_key: "p".into(), session_id: "s".into() }).await.unwrap().len(), 1);
+        store
+            .append(&sub, &[entry(json!({"type": "user"}))])
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .list_subkeys(&SessionListSubkeysKey {
+                    project_key: "p".into(),
+                    session_id: "s".into()
+                })
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
 
         store.delete(&key("p", "s")).await.unwrap();
         assert!(store.load(&sub).await.unwrap().is_none());
@@ -515,11 +550,7 @@ mod tests {
     #[test]
     fn file_path_key_main_and_subagent() {
         let projects = Path::new("/home/u/.claude/projects");
-        let main = file_path_to_session_key(
-            &projects.join("-proj/abc.jsonl"),
-            projects,
-        )
-        .unwrap();
+        let main = file_path_to_session_key(&projects.join("-proj/abc.jsonl"), projects).unwrap();
         assert_eq!(main.session_id, "abc");
         assert_eq!(main.subpath, None);
 
