@@ -55,10 +55,12 @@ mod chain;
 mod error;
 mod parse;
 mod paths;
+pub mod runtime;
 mod sessions;
 pub mod types;
 
 pub use error::{Error, Result};
+pub use runtime::parse_message;
 pub use sessions::{
     get_session_info, get_session_messages, get_subagent_messages, list_sessions, list_subagents,
 };
