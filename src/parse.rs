@@ -462,9 +462,7 @@ pub(crate) fn parse_session_info_from_lite(
 // ---------------------------------------------------------------------------
 
 /// Builds a lite view from an in-memory JSONL string, matching
-/// [`read_session_lite`]'s byte semantics. Mirrors `_jsonl_to_lite`; used by
-/// unit tests that exercise the parse path without touching disk.
-#[cfg(test)]
+/// [`read_session_lite`]'s byte semantics. Mirrors `_jsonl_to_lite`.
 pub(crate) fn jsonl_to_lite(jsonl: &str, mtime: i64) -> LiteSessionFile {
     let buf = jsonl.as_bytes();
     let size = buf.len() as u64;

@@ -23,6 +23,7 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["process", "io-util", "rt", "rt-multi-thread", "macros", "sync", "time", "fs"] }
 tokio-stream = "0.1"
 futures-core = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 unicode-general-category = "1"
 
 [target.'cfg(unix)'.dependencies]

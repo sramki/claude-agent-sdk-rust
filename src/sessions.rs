@@ -69,7 +69,7 @@ fn deduplicate_by_session_id(sessions: Vec<SessionInfo>) -> Vec<SessionInfo> {
 
 /// Sorts by `last_modified` descending (stable) and applies offset + limit.
 /// Mirrors `_apply_sort_limit_offset`.
-fn apply_sort_limit_offset(
+pub(crate) fn apply_sort_limit_offset(
     mut sessions: Vec<SessionInfo>,
     limit: Option<usize>,
     offset: usize,
