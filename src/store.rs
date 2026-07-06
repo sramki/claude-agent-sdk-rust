@@ -540,4 +540,47 @@ mod tests {
         let s2 = fold_session_summary(Some(&s1), &k, &[entry(json!({"type": "tag", "tag": ""}))]);
         assert!(s2.data.get("tag").is_none());
     }
+
+    /// A minimal adapter implementing only the two required methods, to verify
+    /// the optional methods' default bodies return `Error::Unsupported` (the
+    /// documented "absent" contract call sites probe for).
+    #[derive(Default)]
+    struct BareStore;
+
+    #[async_trait]
+    impl SessionStore for BareStore {
+        async fn append(&self, _key: &SessionKey, _entries: &[SessionStoreEntry]) -> Result<()> {
+            Ok(())
+        }
+        async fn load(&self, _key: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_methods_default_to_unsupported() {
+        let store = BareStore;
+        let k = key("p", "s");
+        assert!(matches!(
+            store.list_sessions("p").await,
+            Err(crate::error::Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            store.list_session_summaries("p").await,
+            Err(crate::error::Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            store.delete(&k).await,
+            Err(crate::error::Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            store
+                .list_subkeys(&SessionListSubkeysKey {
+                    project_key: "p".into(),
+                    session_id: "s".into(),
+                })
+                .await,
+            Err(crate::error::Error::Unsupported(_))
+        ));
+    }
 }

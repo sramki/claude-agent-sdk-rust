@@ -484,4 +484,37 @@ mod tests {
         let Message::RateLimit(e) = parse_message(&data).unwrap().unwrap() else { panic!() };
         assert_eq!(e.rate_limit_info.resets_at, Some(123));
     }
+
+    #[test]
+    fn non_object_input_errors() {
+        assert!(matches!(
+            parse_message(&json!("not an object")),
+            Err(Error::MessageParse { .. })
+        ));
+    }
+
+    #[test]
+    fn user_missing_message_field_errors() {
+        // No "message" key -> missing-required-field error.
+        assert!(parse_message(&json!({"type": "user"})).is_err());
+    }
+
+    #[test]
+    fn result_missing_required_field_errors() {
+        // Missing duration_ms (a required numeric field).
+        let data = json!({"type": "result", "subtype": "success", "is_error": false});
+        assert!(parse_message(&data).is_err());
+    }
+
+    #[test]
+    fn stream_event_missing_event_errors() {
+        let data = json!({"type": "stream_event", "uuid": "u", "session_id": "s"});
+        assert!(parse_message(&data).is_err());
+    }
+
+    #[test]
+    fn rate_limit_missing_info_errors() {
+        let data = json!({"type": "rate_limit_event", "uuid": "u", "session_id": "s"});
+        assert!(parse_message(&data).is_err());
+    }
 }
