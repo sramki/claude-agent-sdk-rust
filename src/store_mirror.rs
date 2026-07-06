@@ -186,3 +186,63 @@ impl Inner {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::InMemorySessionStore;
+    use crate::types::SessionKey;
+    use serde_json::json;
+
+    const SID: &str = "11111111-1111-4111-8111-111111111111";
+
+    fn noop() -> MirrorOnError {
+        Arc::new(|_k, _e| Box::pin(async {}))
+    }
+    fn ent(uuid: &str) -> SessionStoreEntry {
+        json!({"type": "user", "uuid": uuid}).as_object().cloned().unwrap()
+    }
+    fn batcher(store: Arc<InMemorySessionStore>, mode: SessionStoreFlushMode) -> TranscriptMirrorBatcher {
+        TranscriptMirrorBatcher::new(store, "/projects".into(), mode, noop())
+    }
+    fn main_key() -> SessionKey {
+        SessionKey { project_key: "-pk".into(), session_id: SID.into(), subpath: None }
+    }
+
+    #[tokio::test]
+    async fn flush_with_nothing_pending_is_noop() {
+        let store = Arc::new(InMemorySessionStore::new());
+        batcher(store.clone(), SessionStoreFlushMode::Batched).flush().await;
+        assert_eq!(store.size(), 0);
+    }
+
+    #[tokio::test]
+    async fn coalesces_same_path_and_skips_empty_batches() {
+        let store = Arc::new(InMemorySessionStore::new());
+        let b = batcher(store.clone(), SessionStoreFlushMode::Batched);
+        let fp = format!("/projects/-pk/{SID}.jsonl");
+        b.enqueue(fp.clone(), vec![ent("a")]);
+        b.enqueue(fp, vec![ent("b")]); // same path -> coalesced into one append
+        b.enqueue(format!("/projects/-pk/{SID}.jsonl"), vec![]); // empty -> skipped
+        b.flush().await;
+        assert_eq!(store.get_entries(&main_key()).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn eager_mode_flushes_then_close() {
+        let store = Arc::new(InMemorySessionStore::new());
+        let b = batcher(store.clone(), SessionStoreFlushMode::Eager);
+        b.enqueue(format!("/projects/-pk/{SID}.jsonl"), vec![ent("x")]);
+        b.close().await; // final flush; exactly-once regardless of the eager race
+        assert_eq!(store.get_entries(&main_key()).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn file_path_outside_projects_dir_is_dropped() {
+        let store = Arc::new(InMemorySessionStore::new());
+        let b = batcher(store.clone(), SessionStoreFlushMode::Batched);
+        b.enqueue("/elsewhere/x.jsonl".into(), vec![ent("a")]);
+        b.flush().await;
+        assert_eq!(store.size(), 0);
+    }
+}

@@ -421,14 +421,20 @@ async fn control_methods_send_and_resolve() {
         .await
         .expect("set mode ok");
     client.stop_task("task-1").await.expect("stop_task ok");
+    client.set_model(Some("claude-sonnet-5")).await.expect("set_model some");
+    client.set_model(None).await.expect("set_model none");
+    client.rewind_files("uuid-1").await.expect("rewind ok");
+    client.reconnect_mcp_server("srv").await.expect("reconnect ok");
+    client.toggle_mcp_server("srv", false).await.expect("toggle ok");
 
     {
         let w = written.lock().unwrap();
-        assert!(w.iter().any(|m| m["request"]["subtype"] == "interrupt"));
-        assert!(w
-            .iter()
-            .any(|m| m["request"]["subtype"] == "set_permission_mode"));
-        assert!(w.iter().any(|m| m["request"]["subtype"] == "stop_task"));
+        for st in [
+            "interrupt", "set_permission_mode", "stop_task", "set_model",
+            "rewind_files", "mcp_reconnect", "mcp_toggle",
+        ] {
+            assert!(w.iter().any(|m| m["request"]["subtype"] == st), "missing {st}");
+        }
     }
     client.disconnect().await.unwrap();
 }
@@ -534,5 +540,113 @@ async fn control_error_response_surfaces_error() {
         matches!(err, claude_agent_sdk_rs::Error::Connection(ref m) if m == "boom"),
         "unexpected error: {err:?}"
     );
+    client.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn result_is_error_with_errors_is_forwarded() {
+    let (transport, _w, inject) = ControlMock::new();
+    let mut client = Client::with_transport(ClaudeAgentOptions::default(), Box::new(transport));
+    client.connect(None).await.unwrap();
+    let mut stream = client.messages();
+    inject
+        .send(Ok(json!({
+            "type": "result", "subtype": "error_max_turns", "duration_ms": 1, "duration_api_ms": 1,
+            "is_error": true, "errors": ["boom1", "boom2"], "num_turns": 1, "session_id": "s",
+        })))
+        .await
+        .unwrap();
+    let mut got = false;
+    for _ in 0..50 {
+        if let Some(Ok(Message::Result(r))) = stream.next().await {
+            assert_eq!(r.subtype, "error_max_turns");
+            got = true;
+            break;
+        }
+    }
+    assert!(got, "error result should be forwarded");
+    drop(stream);
+    client.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn unknown_control_request_subtype_answers_error() {
+    let (transport, written, inject) = ControlMock::new();
+    let mut client = Client::with_transport(ClaudeAgentOptions::default(), Box::new(transport));
+    client.connect(None).await.unwrap();
+    inject
+        .send(Ok(json!({
+            "type": "control_request", "request_id": "bogus1",
+            "request": {"subtype": "totally_unknown_op"},
+        })))
+        .await
+        .unwrap();
+    let resp = wait_written(&written, |v| is_response_for(v, "bogus1").is_some()).await;
+    let inner = is_response_for(&resp, "bogus1").unwrap();
+    assert_eq!(inner["subtype"], "error");
+    assert!(inner["error"].as_str().unwrap().contains("Unsupported"));
+    client.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn session_state_changed_is_forwarded() {
+    let (transport, _w, inject) = ControlMock::new();
+    let mut client = Client::with_transport(ClaudeAgentOptions::default(), Box::new(transport));
+    client.connect(None).await.unwrap();
+    let mut stream = client.messages();
+    inject
+        .send(Ok(json!({
+            "type": "system", "subtype": "session_state_changed", "session_id": "s", "uuid": "u",
+        })))
+        .await
+        .unwrap();
+    let mut got = false;
+    for _ in 0..50 {
+        if let Some(Ok(Message::System(s))) = stream.next().await {
+            if s.subtype == "session_state_changed" {
+                got = true;
+                break;
+            }
+        }
+    }
+    assert!(got);
+    drop(stream);
+    client.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn client_connect_with_text_and_message_prompts() {
+    // connect(Some(Text)) writes an initial user message.
+    let (t1, w1, _i1) = ControlMock::new();
+    let mut c1 = Client::with_transport(ClaudeAgentOptions::default(), Box::new(t1));
+    c1.connect(Some(Prompt::Text("hi".into()))).await.unwrap();
+    assert!(w1.lock().unwrap().iter().any(|m| m["type"] == "user"));
+    c1.disconnect().await.unwrap();
+
+    // connect(Some(Messages)) streams the sequence.
+    let (t2, _w2, _i2) = ControlMock::new();
+    let mut c2 = Client::with_transport(ClaudeAgentOptions::default(), Box::new(t2));
+    c2.connect(Some(Prompt::Messages(vec![json!({"type": "user", "message": {"content": "hi"}})])))
+        .await
+        .unwrap();
+    c2.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn client_query_message_sequence_injects_session_id() {
+    let (transport, written, _inject) = ControlMock::new();
+    let mut client = Client::with_transport(ClaudeAgentOptions::default(), Box::new(transport));
+    client.connect(None).await.unwrap();
+    client
+        .query(
+            Prompt::Messages(vec![json!({"type": "user", "message": {"role": "user", "content": "hi"}})]),
+            "sess-xyz",
+        )
+        .await
+        .unwrap();
+    {
+        let w = written.lock().unwrap();
+        assert!(w.iter().any(|m| m["type"] == "user" && m["session_id"] == "sess-xyz"));
+    }
     client.disconnect().await.unwrap();
 }

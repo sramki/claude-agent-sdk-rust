@@ -361,4 +361,38 @@ mod tests {
         };
         assert_eq!(out.to_wire(), json!({"async": true, "asyncTimeout": 5000}));
     }
+
+    #[test]
+    fn sync_output_to_wire_all_fields() {
+        let out = SyncHookOutput {
+            continue_: Some(true),
+            suppress_output: Some(true),
+            stop_reason: Some("sr".into()),
+            decision: Some("block".into()),
+            system_message: Some("sys".into()),
+            reason: Some("because".into()),
+            hook_specific_output: Some(json!({"hookEventName": "PreToolUse"})),
+        };
+        let w = out.to_wire();
+        assert_eq!(w["suppressOutput"], json!(true));
+        assert_eq!(w["decision"], json!("block"));
+        assert_eq!(w["systemMessage"], json!("sys"));
+        assert_eq!(w["reason"], json!("because"));
+        assert_eq!(w["hookSpecificOutput"]["hookEventName"], json!("PreToolUse"));
+    }
+
+    #[test]
+    fn hook_json_output_to_wire_and_default() {
+        let sync = HookJSONOutput::Sync(SyncHookOutput {
+            continue_: Some(true),
+            ..Default::default()
+        });
+        assert_eq!(sync.to_wire(), json!({"continue": true}));
+
+        let asyncd = HookJSONOutput::Async(AsyncHookOutput { async_timeout: None });
+        assert_eq!(asyncd.to_wire(), json!({"async": true}));
+
+        // Default is an empty sync output.
+        assert_eq!(HookJSONOutput::default().to_wire(), json!({}));
+    }
 }

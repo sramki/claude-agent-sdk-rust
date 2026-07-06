@@ -293,4 +293,23 @@ mod tests {
             json!("needs-auth")
         );
     }
+
+    #[test]
+    fn sse_and_http_to_wire_include_type() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer x".to_string());
+        let sse = McpServerConfig::Sse(McpSseServerConfig {
+            url: "https://sse.example".into(),
+            headers: headers.clone(),
+        });
+        assert_eq!(sse.to_wire()["type"], json!("sse"));
+        assert_eq!(sse.to_wire()["url"], json!("https://sse.example"));
+
+        let http = McpServerConfig::Http(McpHttpServerConfig {
+            url: "https://http.example".into(),
+            headers,
+        });
+        assert_eq!(http.to_wire()["type"], json!("http"));
+        assert_eq!(http.to_wire()["headers"]["Authorization"], json!("Bearer x"));
+    }
 }

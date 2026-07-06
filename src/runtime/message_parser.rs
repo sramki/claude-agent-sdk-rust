@@ -581,4 +581,47 @@ mod tests {
         };
         assert_eq!(a.error, None);
     }
+
+    #[test]
+    fn require_str_and_i64_type_mismatches_error() {
+        // stream_event uuid must be a string; a number triggers require_str's error arm.
+        let bad_str = json!({"type": "stream_event", "uuid": 5, "session_id": "s", "event": {}});
+        assert!(matches!(parse_message(&bad_str), Err(Error::MessageParse { .. })));
+
+        // result duration_ms must be an integer; a string triggers require_i64's error arm.
+        let bad_int = json!({
+            "type": "result", "subtype": "success", "duration_ms": "ten",
+            "duration_api_ms": 5, "is_error": false, "num_turns": 1, "session_id": "s",
+        });
+        assert!(matches!(parse_message(&bad_int), Err(Error::MessageParse { .. })));
+    }
+
+    #[test]
+    fn user_message_not_object_and_bad_content_error() {
+        // message is not an object.
+        let m1 = json!({"type": "user", "message": "nope"});
+        assert!(parse_message(&m1).is_err());
+        // content is neither string nor array.
+        let m2 = json!({"type": "user", "message": {"content": 42}});
+        assert!(parse_message(&m2).is_err());
+    }
+
+    #[test]
+    fn parse_mirror_error_system_message() {
+        let data = json!({
+            "type": "system", "subtype": "mirror_error",
+            "error": "append failed",
+            "key": {"project_key": "pk", "session_id": "sid"},
+        });
+        let Message::System(s) = parse_message(&data).unwrap().unwrap() else {
+            panic!()
+        };
+        match s.kind {
+            Some(SystemMessageKind::MirrorError(m)) => {
+                assert_eq!(m.error, "append failed");
+                assert!(m.key.is_some());
+            }
+            _ => panic!("expected MirrorError"),
+        }
+    }
 }

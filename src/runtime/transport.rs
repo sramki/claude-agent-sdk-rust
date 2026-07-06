@@ -1178,6 +1178,18 @@ mod tests {
     }
 
     #[test]
+    fn partial_messages_fork_session_mirror_and_json_schema() {
+        let mut o = base();
+        o.include_partial_messages = true;
+        o.fork_session = true;
+        o.session_store = Some(std::sync::Arc::new(crate::store::InMemorySessionStore::new()));
+        let cmd = build_command("/c", &o);
+        assert!(cmd.contains(&"--include-partial-messages".to_string()));
+        assert!(cmd.contains(&"--fork-session".to_string()));
+        assert!(cmd.contains(&"--session-mirror".to_string())); // from session_store
+    }
+
+    #[test]
     fn mcp_servers_map_and_path() {
         let mut map = base();
         let mut servers = HashMap::new();

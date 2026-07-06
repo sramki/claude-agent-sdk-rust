@@ -517,3 +517,225 @@ async fn fork_via_store_up_to_and_errors() {
     assert!(fork_session_via_store(&store, "not-a-uuid", dir(), None, None).await.is_err());
     assert!(fork_session_via_store(&store, &sid, dir(), Some("bad"), None).await.is_err());
 }
+
+// --- slow path / gap-fill / error branches -----------------------------------
+
+use claude_agent_sdk_rs::store::fold_session_summary;
+use claude_agent_sdk_rs::types::{SessionStoreListEntry, SessionSummaryEntry};
+use claude_agent_sdk_rs::Error;
+
+/// A store with `list_sessions` but no `list_session_summaries` — forces the
+/// per-session `load()` slow path. `load` behavior is configurable per session
+/// id: "err" errors, "none" returns None, otherwise a one-message transcript.
+struct SlowPathStore {
+    listing: Vec<(String, i64)>,
+}
+
+#[async_trait]
+impl SessionStore for SlowPathStore {
+    async fn append(&self, _k: &SessionKey, _e: &[SessionStoreEntry]) -> Result<()> {
+        Ok(())
+    }
+    async fn load(&self, k: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
+        if k.session_id.starts_with("err") {
+            return Err(Error::connection("load boom"));
+        }
+        if k.session_id.starts_with("none") {
+            return Ok(None);
+        }
+        Ok(Some(vec![user("hi", &new_uuid(0xAB), None, &k.session_id)]))
+    }
+    async fn list_sessions(&self, _project_key: &str) -> Result<Vec<SessionStoreListEntry>> {
+        Ok(self
+            .listing
+            .iter()
+            .map(|(sid, mtime)| SessionStoreListEntry {
+                session_id: sid.clone(),
+                mtime: *mtime,
+            })
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn slow_path_load_ok_err_and_none() {
+    // A real UUID for the Ok row (parse_session_info requires a plausible id);
+    // "err"/"none" prefixes drive the other two branches.
+    let ok = new_uuid(0x100);
+    let store = SlowPathStore {
+        listing: vec![
+            (ok.clone(), 3000),
+            ("err-session".into(), 2000),
+            ("none-session".into(), 1000),
+        ],
+    };
+    let sessions = list_sessions_from_store(&store, dir(), None, 0).await.unwrap();
+    // Ok row parses; err row degrades to an empty-summary row; none row drops.
+    assert!(sessions.iter().any(|s| s.session_id == ok && s.summary == "hi"));
+    assert!(sessions.iter().any(|s| s.session_id == "err-session" && s.summary.is_empty()));
+    assert!(!sessions.iter().any(|s| s.session_id == "none-session"));
+}
+
+/// A store returning stale/dropped/fresh summaries alongside `list_sessions`,
+/// to exercise the gap-fill and drop branches of the summary fast-path.
+struct StaleSummaryStore {
+    inner: InMemorySessionStore,
+    summaries: Vec<SessionSummaryEntry>,
+    listing: Vec<(String, i64)>,
+}
+
+#[async_trait]
+impl SessionStore for StaleSummaryStore {
+    async fn append(&self, k: &SessionKey, e: &[SessionStoreEntry]) -> Result<()> {
+        self.inner.append(k, e).await
+    }
+    async fn load(&self, k: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
+        self.inner.load(k).await
+    }
+    async fn list_sessions(&self, _p: &str) -> Result<Vec<SessionStoreListEntry>> {
+        Ok(self
+            .listing
+            .iter()
+            .map(|(sid, mtime)| SessionStoreListEntry { session_id: sid.clone(), mtime: *mtime })
+            .collect())
+    }
+    async fn list_session_summaries(&self, _p: &str) -> Result<Vec<SessionSummaryEntry>> {
+        Ok(self.summaries.clone())
+    }
+}
+
+#[tokio::test]
+async fn summary_fast_path_stale_dropped_and_fresh() {
+    let fresh = new_uuid(0x100);
+    let stale = new_uuid(0x200);
+    let dropped = new_uuid(0x300); // in summaries but not in listing
+    let inner = InMemorySessionStore::new();
+    // Seed transcripts for fresh + stale so gap-fill/load can parse them.
+    seed_chain(&inner, &fresh, 1, 0x1000).await;
+    seed_chain(&inner, &stale, 1, 0x2000).await;
+
+    // Build a valid (opaque-data) summary via the fold, then override mtime.
+    let summary = |sid: &str, mtime: i64| {
+        let mut e = fold_session_summary(
+            None,
+            &key(sid),
+            &[user("prompt 0", &new_uuid(0xFEED), None, sid)],
+        );
+        e.mtime = mtime;
+        let _: &SessionSummaryEntry = &e;
+        e
+    };
+    let store = StaleSummaryStore {
+        inner,
+        summaries: vec![
+            summary(&fresh, 5000),
+            summary(&stale, 10),   // older than listing mtime -> gap-fill
+            summary(&dropped, 9000), // not in listing -> dropped
+        ],
+        listing: vec![(fresh.clone(), 5000), (stale.clone(), 6000)],
+    };
+
+    let sessions = list_sessions_from_store(&store, dir(), None, 0).await.unwrap();
+    let ids: Vec<&str> = sessions.iter().map(|s| s.session_id.as_str()).collect();
+    assert!(ids.contains(&fresh.as_str()));
+    assert!(ids.contains(&stale.as_str()));
+    assert!(!ids.contains(&dropped.as_str())); // dropped: summary but no listing row
+    // The fresh row comes from the summary; the stale one is gap-filled via load.
+    let fresh_row = sessions.iter().find(|s| s.session_id == fresh).unwrap();
+    assert!(!fresh_row.summary.is_empty());
+}
+
+/// A store whose `load` always errors, to exercise error propagation in the
+/// direct getters.
+struct ErrLoadStore;
+
+#[async_trait]
+impl SessionStore for ErrLoadStore {
+    async fn append(&self, _k: &SessionKey, _e: &[SessionStoreEntry]) -> Result<()> {
+        Ok(())
+    }
+    async fn load(&self, _k: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
+        Err(Error::connection("load failed"))
+    }
+}
+
+#[tokio::test]
+async fn getters_propagate_load_errors() {
+    let store = ErrLoadStore;
+    let sid = new_uuid(0x100);
+    assert!(get_session_info_from_store(&store, &sid, dir()).await.is_err());
+    assert!(get_session_messages_from_store(&store, &sid, dir(), None, 0).await.is_err());
+    assert!(get_subagent_messages_from_store(&store, &sid, "a", dir(), None, 0).await.is_err());
+}
+
+// --- more *_via_store branch coverage ----------------------------------------
+
+#[tokio::test]
+async fn tag_via_store_whitespace_only_errors() {
+    let store = InMemorySessionStore::new();
+    let sid = new_uuid(0x100);
+    seed_chain(&store, &sid, 1, 0x1000).await;
+    // Some("   ") is non-empty text but blank after trim -> rejected.
+    assert!(tag_session_via_store(&store, &sid, Some("   "), dir()).await.is_err());
+}
+
+/// A store whose `delete` fails with a non-Unsupported error, to exercise the
+/// error-propagation arm of `delete_session_via_store`.
+struct DeleteErrStore;
+
+#[async_trait]
+impl SessionStore for DeleteErrStore {
+    async fn append(&self, _k: &SessionKey, _e: &[SessionStoreEntry]) -> Result<()> {
+        Ok(())
+    }
+    async fn load(&self, _k: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
+        Ok(None)
+    }
+    async fn delete(&self, _k: &SessionKey) -> Result<()> {
+        Err(Error::connection("delete boom"))
+    }
+}
+
+#[tokio::test]
+async fn delete_via_store_propagates_real_errors() {
+    let store = DeleteErrStore;
+    let sid = new_uuid(0x100);
+    // Unsupported is swallowed, but a real delete error must propagate.
+    assert!(delete_session_via_store(&store, &sid, dir()).await.is_err());
+}
+
+#[tokio::test]
+async fn fork_via_store_derives_title_from_ai_title_and_explicit_title() {
+    let store = InMemorySessionStore::new();
+    let sid = new_uuid(0x100);
+    seed_chain(&store, &sid, 1, 0x1000).await;
+    // An aiTitle entry (no customTitle) drives derive_title_from_entries' aiTitle arm.
+    store
+        .append(&key(&sid), &[entry(json!({"type": "ai-title", "aiTitle": "Auto Title", "sessionId": sid}))])
+        .await
+        .unwrap();
+    let forked = fork_session_via_store(&store, &sid, dir(), None, None).await.unwrap();
+    assert!(store
+        .get_entries(&key(&forked.session_id))
+        .iter()
+        .any(|e| e["type"] == "custom-title"
+            && e["customTitle"].as_str().unwrap().contains("Auto Title")));
+
+    // An explicit title is used verbatim (with the "(fork)" suffix).
+    let forked2 = fork_session_via_store(&store, &sid, dir(), None, Some("My Fork")).await.unwrap();
+    assert!(store
+        .get_entries(&key(&forked2.session_id))
+        .iter()
+        .any(|e| e["type"] == "custom-title"
+            && e["customTitle"].as_str().unwrap().contains("My Fork")));
+}
+
+#[tokio::test]
+async fn fork_via_store_up_to_message_not_found_errors() {
+    let store = InMemorySessionStore::new();
+    let sid = new_uuid(0x100);
+    seed_chain(&store, &sid, 1, 0x1000).await;
+    // A valid-UUID up_to that isn't in the transcript -> not-found error.
+    let missing = new_uuid(0xDEAD);
+    assert!(fork_session_via_store(&store, &sid, dir(), Some(&missing), None).await.is_err());
+}

@@ -302,4 +302,76 @@ mod tests {
             .await;
         assert_eq!(resp["error"]["code"], -32601);
     }
+
+    #[tokio::test]
+    async fn tool_is_error_result_and_handler_error() {
+        // A handler that returns an is_error result -> isError in the response.
+        let err_result = tool(
+            "boom",
+            "always errors via result",
+            json!({"type": "object"}),
+            |_| async move { Ok(json!({"content": [], "is_error": true})) },
+        );
+        // A handler that returns Err -> jsonrpc error.
+        let handler_err = tool(
+            "throw",
+            "returns Err",
+            json!({"type": "object"}),
+            |_| async move { Err(crate::Error::connection("nope")) },
+        );
+        let config = create_sdk_mcp_server("s", "1.0.0", vec![err_result, handler_err]);
+        let server = instance(&config);
+
+        let r1 = server
+            .handle_message(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "boom"}}))
+            .await;
+        assert_eq!(r1["result"]["isError"], json!(true));
+
+        let r2 = server
+            .handle_message(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "throw"}}))
+            .await;
+        assert_eq!(r2["error"]["code"], -32603);
+        assert!(r2["error"]["message"].as_str().unwrap().contains("nope"));
+    }
+
+    #[tokio::test]
+    async fn notifications_initialized_is_acked() {
+        let config = greet_server();
+        let server = instance(&config);
+        let resp = server
+            .handle_message(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .await;
+        assert_eq!(resp["result"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn tool_list_entry_includes_annotations_and_meta() {
+        let mut t = tool("annotated", "has annotations", json!({"type": "object"}), |_| async move {
+            Ok(json!({"content": []}))
+        });
+        t.annotations = Some(ToolAnnotations {
+            title: Some("Annotated".into()),
+            read_only_hint: Some(true),
+            max_result_size_chars: Some(4096),
+            ..Default::default()
+        });
+        let config = create_sdk_mcp_server("s", "1.0.0", vec![t]);
+        let server = instance(&config);
+        let list = server
+            .handle_message(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+            .await;
+        let entry = &list["result"]["tools"][0];
+        assert_eq!(entry["annotations"]["readOnlyHint"], json!(true));
+        assert_eq!(entry["_meta"]["anthropic/maxResultSizeChars"], json!(4096));
+    }
+
+    #[test]
+    fn debug_impls_render() {
+        let greet = tool("greet", "d", json!({"type": "object"}), |_| async move { Ok(json!({})) });
+        assert!(format!("{greet:?}").contains("greet"));
+        let config = create_sdk_mcp_server("dbg", "1.0.0", vec![greet]);
+        if let McpServerConfig::Sdk { instance, .. } = &config {
+            assert!(format!("{instance:?}").contains("dbg"));
+        }
+    }
 }

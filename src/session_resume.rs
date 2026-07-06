@@ -596,4 +596,92 @@ mod tests {
             Some(tmp.path().to_string_lossy().as_ref())
         );
     }
+
+    #[tokio::test]
+    async fn copy_auth_files_redacts_credentials_and_copies_claude_json() {
+        let src_cfg = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src_cfg.path().join(".credentials.json"),
+            r#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"}}"#,
+        )
+        .unwrap();
+        std::fs::write(src_cfg.path().join(".claude.json"), r#"{"ok":true}"#).unwrap();
+
+        let store = Arc::new(InMemorySessionStore::new());
+        store
+            .append(
+                &key_for(SID, None),
+                &[entry(json!({"type": "user", "uuid": "u1", "parentUuid": null, "sessionId": SID, "message": {"content": "hi"}}))],
+            )
+            .await
+            .unwrap();
+        let store_dyn: Arc<dyn SessionStore> = store;
+        let mut options = opts(store_dyn, src_cfg.path());
+        options.resume = Some(SID.into());
+
+        let m = materialize_resume_session(&options).await.unwrap().unwrap();
+        let creds = std::fs::read_to_string(m.config_dir.join(".credentials.json")).unwrap();
+        assert!(creds.contains("accessToken"));
+        assert!(!creds.contains("refreshToken")); // redacted
+        assert!(m.config_dir.join(".claude.json").exists());
+    }
+
+    #[tokio::test]
+    async fn continue_without_list_sessions_errors() {
+        #[derive(Default)]
+        struct MiniStore;
+        #[async_trait::async_trait]
+        impl SessionStore for MiniStore {
+            async fn append(&self, _: &SessionKey, _: &[SessionStoreEntry]) -> Result<()> {
+                Ok(())
+            }
+            async fn load(&self, _: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
+                Ok(None)
+            }
+        }
+        let empty = tempfile::tempdir().unwrap();
+        let store: Arc<dyn SessionStore> = Arc::new(MiniStore);
+        let mut options = opts(store, empty.path());
+        options.continue_conversation = true;
+        let res = materialize_resume_session(&options).await;
+        assert!(matches!(res, Err(Error::Invalid(_))));
+    }
+
+    #[tokio::test]
+    async fn materialize_skips_unsafe_subkeys() {
+        struct UnsafeStore {
+            inner: InMemorySessionStore,
+        }
+        #[async_trait::async_trait]
+        impl SessionStore for UnsafeStore {
+            async fn append(&self, k: &SessionKey, e: &[SessionStoreEntry]) -> Result<()> {
+                self.inner.append(k, e).await
+            }
+            async fn load(&self, k: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
+                self.inner.load(k).await
+            }
+            async fn list_subkeys(&self, _: &SessionListSubkeysKey) -> Result<Vec<String>> {
+                // Both are unsafe and must be skipped without writing/panicking.
+                Ok(vec!["../evil".into(), String::new()])
+            }
+        }
+        let empty = tempfile::tempdir().unwrap();
+        let store = UnsafeStore { inner: InMemorySessionStore::new() };
+        store
+            .append(
+                &key_for(SID, None),
+                &[entry(json!({"type": "user", "uuid": "u1", "parentUuid": null, "sessionId": SID, "message": {"content": "hi"}}))],
+            )
+            .await
+            .unwrap();
+        let store_dyn: Arc<dyn SessionStore> = Arc::new(store);
+        let mut options = opts(store_dyn, empty.path());
+        options.resume = Some(SID.into());
+
+        let m = materialize_resume_session(&options).await.unwrap().unwrap();
+        let pk = crate::project_key_for_directory(Some(Path::new(DIR)));
+        // Main transcript written; no subagent dir (both subkeys were unsafe).
+        assert!(m.config_dir.join("projects").join(&pk).join(format!("{SID}.jsonl")).exists());
+        assert!(!m.config_dir.join("projects").join(&pk).join(SID).exists());
+    }
 }
