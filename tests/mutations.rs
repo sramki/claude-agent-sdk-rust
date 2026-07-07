@@ -236,3 +236,59 @@ fn delete_rejects_invalid_uuid() {
         Err(claude_agent_sdk_rs::Error::InvalidSessionId(_))
     ));
 }
+
+#[test]
+fn fork_preserves_content_replacements_and_rewrites_special_fields() {
+    let _g = env_guard!();
+    let c = claude_config_dir();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("proj");
+    fs::create_dir_all(&project).unwrap();
+    let pd = make_project_dir(&c, &realpath(&project));
+    let sid = new_uuid(0xC000);
+    let (u1, prog, a1, side, cr) = (
+        new_uuid(0xC1),
+        new_uuid(0xC2),
+        new_uuid(0xC3),
+        new_uuid(0xC4),
+        new_uuid(0xC5),
+    );
+    // A transcript that exercises: a progress entry as a parent (skipped in the
+    // parent chain and excluded from the fork), a logicalParentUuid, special
+    // fields that must be stripped, a sidechain (filtered), and a
+    // content-replacement (must be carried into the fork).
+    let lines = [
+        serde_json::json!({"type": "user", "uuid": u1, "parentUuid": null, "sessionId": sid, "message": {"role": "user", "content": "start"}}),
+        serde_json::json!({"type": "progress", "uuid": prog, "parentUuid": u1, "sessionId": sid}),
+        serde_json::json!({"type": "assistant", "uuid": a1, "parentUuid": prog, "logicalParentUuid": u1, "sessionId": sid, "teamName": "t", "agentName": "ag", "slug": "sl", "sourceToolAssistantUUID": "x", "message": {"role": "assistant", "content": "reply"}}),
+        serde_json::json!({"type": "user", "uuid": side, "parentUuid": a1, "sessionId": sid, "isSidechain": true, "message": {"role": "user", "content": "sidechain"}}),
+        serde_json::json!({"type": "content-replacement", "uuid": cr, "sessionId": sid, "replacements": [{"from": "secret", "to": "[redacted]"}]}),
+    ];
+    let body: String = lines.iter().map(|l| l.to_string() + "\n").collect();
+    fs::write(pd.join(format!("{sid}.jsonl")), body).unwrap();
+
+    let result = fork_session(&sid, Some(&project), None, None).unwrap();
+    let fork_body = fs::read_to_string(pd.join(format!("{}.jsonl", result.session_id))).unwrap();
+    let forked: Vec<serde_json::Value> = fork_body
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    // The content-replacement is carried over.
+    assert!(forked.iter().any(|e| e["type"] == "content-replacement"
+        && e["replacements"][0]["to"] == "[redacted]"));
+    // The progress entry and the sidechain are excluded.
+    assert!(!forked.iter().any(|e| e["type"] == "progress"));
+    assert!(forked.iter().all(|e| e["isSidechain"] != serde_json::Value::Bool(true)));
+    // The assistant entry kept its content but lost the special fields, and its
+    // parent chain skipped the progress entry (so parentUuid is non-null).
+    let asst = forked.iter().find(|e| e["message"]["content"] == "reply").unwrap();
+    assert!(asst.get("teamName").is_none());
+    assert!(asst.get("agentName").is_none());
+    assert!(asst["parentUuid"].is_string()); // resolved past the progress parent
+    assert!(asst["forkedFrom"]["messageUuid"] == a1);
+    // A "(fork)" title trailer is present.
+    assert!(forked.iter().any(|e| e["type"] == "custom-title"
+        && e["customTitle"].as_str().unwrap().ends_with("(fork)")));
+}
