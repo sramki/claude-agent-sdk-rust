@@ -9,18 +9,26 @@ for Python (pinned to **v0.2.110**). Read local **Claude Code** session history
 
 ## Install
 
-The crate is published as **`claude-agent-sdk-rs`** and imported as
-**`claude_agent_sdk_rs`**:
+The crate name is **`claude-agent-sdk-rs`**, imported as **`claude_agent_sdk_rs`**.
+
+**Not yet on crates.io** — add it as a git dependency. Pin a `rev` (or `tag`) so
+builds are reproducible while the API is still settling:
 
 ```toml
 [dependencies]
-claude-agent-sdk-rs = "0.1"
+claude-agent-sdk-rs = { git = "https://github.com/sramki/claude-agent-sdk-rust", rev = "c904c86" }
 ```
 
-Or straight from git (no crates.io needed):
+Track the latest `main` instead (unpinned — moves as the repo does):
 
 ```toml
-claude-agent-sdk-rs = { git = "https://github.com/sramki/claude-agent-sdk-rust" }
+claude-agent-sdk-rs = { git = "https://github.com/sramki/claude-agent-sdk-rust", branch = "main" }
+```
+
+Once published, this becomes:
+
+```toml
+claude-agent-sdk-rs = "0.1"
 ```
 
 ```rust
