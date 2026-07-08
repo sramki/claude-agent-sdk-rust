@@ -107,16 +107,25 @@ Read local session history (filesystem only, no CLI):
 
 ```rust
 use std::path::Path;
-use claude_agent_sdk_rs::{list_sessions, get_session_messages, MessageType};
+use claude_agent_sdk_rs::{list_sessions, get_session_messages, get_session_entries, MessageType};
 
 # fn run() -> claude_agent_sdk_rs::Result<()> {
 let dir = Path::new("/path/to/project");
 for info in list_sessions(Some(dir), Some(20), 0, true)? {
     println!("{}  {}", info.session_id, info.summary);
 }
+// Conversation view: one branch, user/assistant only, envelope projected away.
 for msg in get_session_messages("550e8400-e29b-41d4-a716-446655440000", Some(dir), None, 0)? {
     let who = match msg.message_type { MessageType::User => "user", MessageType::Assistant => "assistant" };
     println!("[{who}] {}", msg.message); // `message` is the raw serde_json::Value
+}
+
+// Lossless view: every transcript line, verbatim — all branches, all fields,
+// byte-for-byte. Parse each line yourself for full-fidelity access.
+for line in get_session_entries("550e8400-e29b-41d4-a716-446655440000", Some(dir))? {
+    if let Ok(entry) = serde_json::from_str::<serde_json::Value>(&line) {
+        let _ = entry.get("parentUuid"); // envelope fields get_session_messages drops
+    }
 }
 # Ok(()) }
 ```
