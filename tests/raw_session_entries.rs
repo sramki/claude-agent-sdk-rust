@@ -133,6 +133,83 @@ fn get_session_entries_round_trips_byte_for_byte() {
     assert_eq!(branch_texts.len(), 2, "raw read keeps BOTH fork branches");
 }
 
+/// The real `~/.claude` config home, or `None` if this machine has no sessions
+/// (so the test skips cleanly on CI / other machines).
+fn real_config_home() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let cfg = PathBuf::from(home).join(".claude");
+    cfg.join("projects").is_dir().then_some(cfg)
+}
+
+/// Reads the **largest real transcript on this machine** through
+/// `get_session_entries` and asserts (1) byte-for-byte fidelity and (2) that
+/// every field of every entry is recoverable. Gated: skips when no local
+/// sessions exist. The transcript is never copied into the repo.
+#[test]
+fn real_transcript_round_trips_byte_for_byte_and_exposes_all_fields() {
+    let _g = env_guard!();
+    let Some(cfg) = real_config_home() else {
+        eprintln!("skip: no ~/.claude/projects on this machine");
+        return;
+    };
+    // Find the largest .jsonl under projects/.
+    let mut biggest: Option<(u64, PathBuf)> = None;
+    for proj in std::fs::read_dir(cfg.join("projects")).into_iter().flatten().flatten() {
+        if !proj.path().is_dir() {
+            continue;
+        }
+        for f in std::fs::read_dir(proj.path()).into_iter().flatten().flatten() {
+            let p = f.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+                if biggest.as_ref().is_none_or(|(b, _)| len > *b) {
+                    biggest = Some((len, p));
+                }
+            }
+        }
+    }
+    let Some((size, path)) = biggest else {
+        eprintln!("skip: no transcripts found");
+        return;
+    };
+    eprintln!("real transcript: {} ({size} bytes)", path.display());
+
+    let raw = std::fs::read_to_string(&path).unwrap();
+    let sid = path.file_stem().unwrap().to_string_lossy().into_owned();
+
+    // Read via the public API against the real config home.
+    std::env::set_var("CLAUDE_CONFIG_DIR", &cfg);
+    let entries = get_session_entries(&sid, None).unwrap();
+
+    // (1) Byte-for-byte round-trip.
+    let expected = if raw.ends_with('\n') {
+        entries.join("\n") + "\n"
+    } else {
+        entries.join("\n")
+    };
+    assert_eq!(expected.len(), raw.len(), "byte length mismatch");
+    assert_eq!(expected, raw, "real transcript must round-trip byte-for-byte");
+
+    // (2) Every field: parse each non-blank line, union all top-level keys.
+    let mut all_keys = std::collections::BTreeSet::new();
+    let mut parsed = 0usize;
+    for line in entries.iter().filter(|l| !l.trim().is_empty()) {
+        let v: Value = serde_json::from_str(line).expect("every non-blank line is valid JSON");
+        if let Some(obj) = v.as_object() {
+            for k in obj.keys() {
+                all_keys.insert(k.clone());
+            }
+        }
+        parsed += 1;
+    }
+    eprintln!("entries: {parsed} | distinct top-level fields ({}): {all_keys:?}", all_keys.len());
+    // The envelope fields the conversation reader drops must be present raw.
+    for envelope in ["parentUuid", "timestamp"] {
+        assert!(all_keys.contains(envelope), "raw read must expose '{envelope}'");
+    }
+    assert!(parsed > 0, "expected a non-empty transcript");
+}
+
 #[test]
 fn get_session_entries_invalid_and_missing() {
     let _g = env_guard!();
@@ -172,6 +249,7 @@ async fn get_session_entries_from_store_preserves_all_fields() {
         .count();
     assert_eq!(branches, 2);
 
-    // Unknown / invalid -> Ok(empty) (store-reader contract).
+    // Invalid UUID -> Ok(empty); valid-but-absent UUID -> Ok(empty) (store-reader contract).
     assert!(get_session_entries_from_store(&store, "bad", Some(&cwd)).await.unwrap().is_empty());
+    assert!(get_session_entries_from_store(&store, &new_uuid(0xAB5E17), Some(&cwd)).await.unwrap().is_empty());
 }
