@@ -12,6 +12,6 @@ pub mod transport;
 
 pub use api::{query, query_with_transport, MessageStream, Prompt};
 pub use client::Client;
-pub use message_parser::parse_message;
+pub use message_parser::{content_blocks, parse_message};
 pub use query::{Query, QueryConfig};
 pub use transport::{SubprocessCliTransport, Transport};

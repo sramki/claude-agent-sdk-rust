@@ -52,8 +52,9 @@ MSRV: Rust 1.83.
 - **In-process MCP tools** — `create_sdk_mcp_server` + `tool` run tools in your
   process (no IPC).
 - **Typed multimodal input** (extension) — `input::user_message` +
-  `UserContentBlock::{text, image_base64, image_url}` build validated text/image
-  content blocks (MIME allowlist + size cap) for `Prompt::Messages`.
+  `UserContentBlock::{text, image_base64, image_url, document_base64, document_url}`
+  build validated text / image / PDF content blocks (MIME allowlist + size cap)
+  for `Prompt::Messages`.
 
 **Session reader** (filesystem, no CLI)
 
@@ -66,6 +67,11 @@ MSRV: Rust 1.83.
   projection, no chain selection (all branches / forks / pre-compaction history),
   no re-serialization. Byte-for-byte round-trippable. `get_session_entries_from_store`
   is the store-backed counterpart (field-lossless).
+- **`get_session_entries_typed`** — same lossless view as typed `TranscriptEntry`
+  values: common envelope fields (`parent_uuid`, `timestamp`, `cwd`, `git_branch`,
+  `tool_use_result`, …) typed, everything else kept in `extra`. Plus
+  `content_blocks(&msg.message)` to parse a message payload into typed
+  `ContentBlock`s. Store variant: `get_session_entries_typed_from_store`.
 - **`list_subagents`** / **`get_subagent_messages`** — subagent transcripts.
 
 **Session write ops**

@@ -15,7 +15,7 @@ use crate::paths::{
     canonicalize_path, find_project_dir, projects_dir, sanitize_path, validate_uuid,
     worktree_paths, MAX_SANITIZED_LENGTH,
 };
-use crate::types::{SessionInfo, SessionMessage};
+use crate::types::{SessionInfo, SessionMessage, TranscriptEntry};
 
 // ---------------------------------------------------------------------------
 // Directory scanning
@@ -492,6 +492,37 @@ pub fn get_session_entries(session_id: &str, directory: Option<&Path>) -> Result
     // `.lines()` splits on `\n` (stripping a trailing `\r`), yields no phantom
     // element for the file's final newline, and preserves interior blank lines.
     Ok(content.lines().map(str::to_string).collect())
+}
+
+/// Reads a session's transcript as **typed, full-fidelity entries** — the
+/// ergonomic counterpart to [`get_session_entries`].
+///
+/// Each line is parsed into a [`TranscriptEntry`]: the common envelope fields
+/// are typed and every other field is preserved in
+/// [`extra`](TranscriptEntry::extra), so it is lossless like
+/// [`get_session_entries`] but with typed access (no `Value` digging). Like the
+/// raw reader it returns **every** entry — all branches, sidechains, meta, and
+/// pre-compaction history — with no conversation-chain selection. Blank and
+/// non-JSON lines are skipped.
+///
+/// Non-upstream extension. Returns `Ok(vec![])` if the session is not found, and
+/// [`Error::InvalidSessionId`] if `session_id` is invalid.
+pub fn get_session_entries_typed(
+    session_id: &str,
+    directory: Option<&Path>,
+) -> Result<Vec<TranscriptEntry>> {
+    if !validate_uuid(session_id) {
+        return Err(Error::InvalidSessionId(session_id.to_string()));
+    }
+    let content = match read_session_file(session_id, directory) {
+        Some(c) => c,
+        None => return Ok(Vec::new()),
+    };
+    Ok(content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<TranscriptEntry>(l).ok())
+        .collect())
 }
 
 /// Lists subagent IDs for a session by scanning its `subagents/` directory

@@ -127,6 +127,28 @@ fn parse_tool_result_content(v: &Value) -> ToolResultContent {
     }
 }
 
+/// Parses the `content` of a raw message value (`{"role":.., "content":..}`)
+/// into typed [`ContentBlock`]s.
+///
+/// Convenience for the session reader, whose [`SessionMessage::message`] /
+/// [`TranscriptEntry::message`] are raw values: `content_blocks(&msg.message)`
+/// yields typed blocks without a second parse. A string `content` becomes a
+/// single [`ContentBlock::Text`]; unknown block kinds are skipped. Never errors —
+/// a non-message value yields an empty vec.
+///
+/// [`SessionMessage::message`]: crate::types::SessionMessage::message
+/// [`TranscriptEntry::message`]: crate::types::TranscriptEntry::message
+pub fn content_blocks(message: &Value) -> Vec<ContentBlock> {
+    match message.get("content") {
+        Some(Value::String(s)) => vec![ContentBlock::Text(TextBlock { text: s.clone() })],
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|b| parse_block(b, message, true).ok().flatten())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Parses one raw CLI message. Returns `Ok(None)` for unrecognized message
 /// types (forward-compatible skip). Faithful port of `parse_message`.
 pub fn parse_message(data: &Value) -> Result<Option<Message>> {

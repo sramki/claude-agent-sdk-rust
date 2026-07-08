@@ -24,7 +24,7 @@ pub mod session_info;
 pub mod store;
 
 // Session reader types (used across the crate's reader modules).
-pub use session_info::{MessageType, SessionInfo, SessionMessage};
+pub use session_info::{MessageType, SessionInfo, SessionMessage, TranscriptEntry};
 
 // Content blocks.
 pub use content::{

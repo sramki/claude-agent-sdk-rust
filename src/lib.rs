@@ -72,7 +72,7 @@ mod store_read;
 pub mod types;
 
 pub use error::{Error, Result};
-pub use input::{user_message, ImageSource, UserContentBlock};
+pub use input::{user_message, DocumentSource, ImageSource, UserContentBlock};
 pub use mcp::{create_sdk_mcp_server, tool, SdkMcpTool, ToolAnnotations};
 pub use mutations::{
     delete_session, delete_session_via_store, fork_session, fork_session_via_store,
@@ -80,19 +80,20 @@ pub use mutations::{
     tag_session_via_store, ForkSessionResult,
 };
 pub use runtime::{
-    parse_message, query, query_with_transport, Client, MessageStream, Prompt,
+    content_blocks, parse_message, query, query_with_transport, Client, MessageStream, Prompt,
     SubprocessCliTransport, Transport,
 };
 pub use sessions::{
-    get_session_entries, get_session_info, get_session_messages, get_subagent_messages,
-    list_sessions, list_subagents,
+    get_session_entries, get_session_entries_typed, get_session_info, get_session_messages,
+    get_subagent_messages, list_sessions, list_subagents,
 };
 pub use store::{
     file_path_to_session_key, fold_session_summary, summary_entry_to_sdk_info, InMemorySessionStore,
 };
 pub use store_import::import_session_to_store;
 pub use store_read::{
-    get_session_entries_from_store, get_session_info_from_store, get_session_messages_from_store,
-    get_subagent_messages_from_store, list_sessions_from_store, list_subagents_from_store,
+    get_session_entries_from_store, get_session_entries_typed_from_store,
+    get_session_info_from_store, get_session_messages_from_store, get_subagent_messages_from_store,
+    list_sessions_from_store, list_subagents_from_store,
 };
 pub use types::*;

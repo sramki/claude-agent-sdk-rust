@@ -16,10 +16,11 @@ use std::sync::Mutex;
 
 use serde_json::{json, Value};
 
-use claude_agent_sdk_rs::types::SessionStoreEntry;
+use claude_agent_sdk_rs::types::{ContentBlock, SessionStoreEntry};
 use claude_agent_sdk_rs::{
-    get_session_entries, get_session_entries_from_store, get_session_messages,
-    import_session_to_store, InMemorySessionStore,
+    content_blocks, get_session_entries, get_session_entries_from_store, get_session_entries_typed,
+    get_session_entries_typed_from_store, get_session_messages, import_session_to_store,
+    InMemorySessionStore,
 };
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -261,6 +262,41 @@ fn real_transcript_round_trips_byte_for_byte_and_exposes_all_fields() {
         assert!(all_keys.contains(envelope), "raw read must expose '{envelope}'");
     }
     assert!(parsed > 0, "expected a non-empty transcript");
+}
+
+#[tokio::test]
+async fn typed_entries_preserve_envelope_and_extra_and_content() {
+    let _g = env_guard!();
+    let config = claude_config_dir();
+    let (cwd, sid, _pk, _raw) = write_rich_transcript(&config);
+
+    let typed = get_session_entries_typed(&sid, Some(&cwd)).unwrap();
+    // Same 7 entries the raw reader sees (no chain selection, no filtering).
+    assert_eq!(typed.len(), 7);
+
+    // Typed envelope access (no Value digging).
+    let asst = typed.iter().find(|e| e.entry_type.as_deref() == Some("assistant")).unwrap();
+    assert_eq!(asst.request_id.as_deref(), Some("req_1"));
+    assert!(asst.parent_uuid.is_some());
+    let first = typed.iter().find(|e| e.git_branch.is_some()).unwrap();
+    assert_eq!(first.git_branch.as_deref(), Some("main"));
+    assert_eq!(first.cwd.as_deref(), Some("/proj"));
+
+    // Unknown/extra fields are preserved losslessly in `extra`.
+    assert!(typed.iter().any(|e| e.extra.contains_key("userType")));
+    let sidechain = typed.iter().find(|e| e.is_sidechain == Some(true)).unwrap();
+    assert_eq!(sidechain.is_sidechain, Some(true));
+
+    // Feature C: typed content blocks from the raw message payload.
+    let blocks = content_blocks(asst.message.as_ref().unwrap());
+    assert!(matches!(blocks.first(), Some(ContentBlock::Text(_))));
+
+    // Store variant returns the same typed entries.
+    let store = InMemorySessionStore::new();
+    import_session_to_store(&sid, &store, Some(&cwd), true, 500).await.unwrap();
+    let from_store = get_session_entries_typed_from_store(&store, &sid, Some(&cwd)).await.unwrap();
+    assert_eq!(from_store.len(), 7);
+    assert!(from_store.iter().any(|e| e.request_id.as_deref() == Some("req_1")));
 }
 
 #[test]

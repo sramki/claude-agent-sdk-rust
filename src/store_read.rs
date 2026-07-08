@@ -24,7 +24,7 @@ use crate::sessions::apply_sort_limit_offset;
 use crate::store::summary_entry_to_sdk_info;
 use crate::types::{
     SessionInfo, SessionKey, SessionMessage, SessionStore, SessionStoreEntry,
-    SessionStoreListEntry, SessionSummaryEntry,
+    SessionStoreListEntry, SessionSummaryEntry, TranscriptEntry,
 };
 
 /// Transcript entry types kept when filtering store entries (mirrors the
@@ -386,6 +386,30 @@ pub async fn get_session_entries_from_store(
     let project_key = crate::project_key_for_directory(directory);
     let entries = store.load(&key(&project_key, session_id, None)).await?;
     Ok(entries.unwrap_or_default())
+}
+
+/// Reads a session's **typed, full-fidelity entries** from a [`SessionStore`] —
+/// the typed counterpart to [`get_session_entries_from_store`] (and the
+/// store-backed counterpart to [`get_session_entries_typed`]).
+///
+/// Each stored entry is parsed into a [`TranscriptEntry`] (envelope typed, all
+/// other fields kept in `extra`). No chain selection or filtering. Non-upstream
+/// extension. Returns `Ok(vec![])` for an unknown or non-UUID `session_id`.
+pub async fn get_session_entries_typed_from_store(
+    store: &dyn SessionStore,
+    session_id: &str,
+    directory: Option<&Path>,
+) -> Result<Vec<TranscriptEntry>> {
+    if !validate_uuid(session_id) {
+        return Ok(Vec::new());
+    }
+    let project_key = crate::project_key_for_directory(directory);
+    let entries = store.load(&key(&project_key, session_id, None)).await?;
+    Ok(entries
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|m| serde_json::from_value::<TranscriptEntry>(Value::Object(m)).ok())
+        .collect())
 }
 
 /// Lists subagent IDs for a session from a [`SessionStore`]. Store-backed

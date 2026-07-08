@@ -4,7 +4,7 @@
 //! Python SDK's `types.py`, with idiomatic Rust field types.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// The type of a conversation message — either a user turn or an assistant turn.
 ///
@@ -40,6 +40,63 @@ pub struct SessionMessage {
     /// Always `None` for top-level conversation messages. Present for API
     /// parity with the Python `parent_tool_use_id` field.
     pub parent_tool_use_id: Option<String>,
+}
+
+/// A single transcript line with the common envelope fields typed, plus a
+/// [`extra`](TranscriptEntry::extra) catch-all so **nothing is lost**.
+///
+/// Returned by [`get_session_entries_typed`](crate::get_session_entries_typed).
+/// This is the typed, full-fidelity view of a transcript: unlike
+/// [`SessionMessage`] it keeps the whole envelope (not just 5 fields) and does
+/// not select a single conversation branch. Non-upstream extension.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct TranscriptEntry {
+    /// Entry type (`"user"`, `"assistant"`, `"system"`, `"progress"`, …).
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub entry_type: Option<String>,
+    /// Entry uuid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    /// Parent entry uuid (the conversation DAG link).
+    #[serde(rename = "parentUuid", default, skip_serializing_if = "Option::is_none")]
+    pub parent_uuid: Option<String>,
+    /// Logical parent uuid (set on forked/edited branches).
+    #[serde(rename = "logicalParentUuid", default, skip_serializing_if = "Option::is_none")]
+    pub logical_parent_uuid: Option<String>,
+    /// Owning session id.
+    #[serde(rename = "sessionId", default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// ISO-8601 timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    /// Working directory at the time of the entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Git branch at the time of the entry.
+    #[serde(rename = "gitBranch", default, skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+    /// Whether the entry belongs to a subagent sidechain.
+    #[serde(rename = "isSidechain", default, skip_serializing_if = "Option::is_none")]
+    pub is_sidechain: Option<bool>,
+    /// Whether the entry is metadata (not a visible conversation turn).
+    #[serde(rename = "isMeta", default, skip_serializing_if = "Option::is_none")]
+    pub is_meta: Option<bool>,
+    /// Whether the entry is a compaction summary.
+    #[serde(rename = "isCompactSummary", default, skip_serializing_if = "Option::is_none")]
+    pub is_compact_summary: Option<bool>,
+    /// Backend request id (assistant turns).
+    #[serde(rename = "requestId", default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// The raw Anthropic API message value (`role`, `content`, …), if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<Value>,
+    /// Tool-execution result payload, if present.
+    #[serde(rename = "toolUseResult", default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_result: Option<Value>,
+    /// Every other field on the line, preserved verbatim — this is what makes
+    /// the typed view lossless.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// Session metadata extracted from `stat` + head/tail reads.

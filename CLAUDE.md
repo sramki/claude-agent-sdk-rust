@@ -57,9 +57,14 @@ behavioral discrepancies found. Store-layer test files map to the remaining buck
   - `*_via_store` mutation variants (`mutations`).
   - Reusable conformance harness (`testing::run_session_store_conformance`).
 - **Typed multimodal input (non-upstream extension):** `input` module — `UserContentBlock`
-  (`text`/`image_base64`/`image_url`, validated: MIME allowlist + 15 MiB cap) + `user_message`
-  build the wire content blocks the CLI already accepts, for `Prompt::Messages`. Sending images
-  works via raw JSON too; this is the type-safe path.
+  (`text`/`image_base64`/`image_url`/`document_base64`/`document_url`, validated: MIME allowlist +
+  size caps) + `user_message` build the wire content blocks the CLI accepts, for `Prompt::Messages`.
+  Document/PDF blocks were confirmed working against the real CLI. Raw JSON also works; this is the
+  type-safe path.
+- **Typed transcript entry (non-upstream extension):** `TranscriptEntry` (envelope fields typed +
+  `#[serde(flatten)] extra` catch-all = lossless) via `get_session_entries_typed` /
+  `get_session_entries_typed_from_store`. `content_blocks(&Value)` parses a raw message payload into
+  typed `ContentBlock`s (reuses the runtime parser).
 - **Lossless raw reader (non-upstream extension):** `get_session_entries` returns a session's
   transcript as verbatim raw lines — no envelope projection, no `build_conversation_chain` selection
   (all branches/forks/pre-compaction history), no re-serialization; byte-for-byte round-trippable.

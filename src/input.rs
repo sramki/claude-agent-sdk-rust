@@ -33,6 +33,13 @@ pub const SUPPORTED_IMAGE_MEDIA_TYPES: [&str; 4] =
 /// model may impose stricter limits.
 pub const MAX_IMAGE_BASE64_LEN: usize = 15 * 1024 * 1024;
 
+/// Document (attachment) MIME types Claude accepts for input.
+pub const SUPPORTED_DOCUMENT_MEDIA_TYPES: [&str; 2] = ["application/pdf", "text/plain"];
+
+/// Client-side sanity cap on base64 document-payload length (40 MiB). Sanity
+/// guard only; the CLI / model may impose stricter limits.
+pub const MAX_DOCUMENT_BASE64_LEN: usize = 40 * 1024 * 1024;
+
 /// The source of an [`UserContentBlock::Image`] block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImageSource {
@@ -50,6 +57,23 @@ pub enum ImageSource {
     },
 }
 
+/// The source of an [`UserContentBlock::Document`] block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentSource {
+    /// Base64-encoded document data (no `data:` URI prefix).
+    Base64 {
+        /// MIME type, one of [`SUPPORTED_DOCUMENT_MEDIA_TYPES`].
+        media_type: String,
+        /// Base64 payload.
+        data: String,
+    },
+    /// A URL Claude fetches.
+    Url {
+        /// The document URL.
+        url: String,
+    },
+}
+
 /// A block of user input content. Build a sequence and serialize it with
 /// [`user_message`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +82,8 @@ pub enum UserContentBlock {
     Text(String),
     /// An image block.
     Image(ImageSource),
+    /// A document block (e.g. a PDF).
+    Document(DocumentSource),
 }
 
 impl UserContentBlock {
@@ -95,6 +121,35 @@ impl UserContentBlock {
         Ok(UserContentBlock::Image(ImageSource::Url { url }))
     }
 
+    /// A base64 document block (e.g. a PDF). Validates `media_type` against
+    /// [`SUPPORTED_DOCUMENT_MEDIA_TYPES`] and `data` against
+    /// [`MAX_DOCUMENT_BASE64_LEN`].
+    pub fn document_base64(media_type: impl Into<String>, data: impl Into<String>) -> Result<Self> {
+        let media_type = media_type.into();
+        if !SUPPORTED_DOCUMENT_MEDIA_TYPES.contains(&media_type.as_str()) {
+            return Err(Error::Invalid(format!(
+                "unsupported document media type {media_type:?}; expected one of {SUPPORTED_DOCUMENT_MEDIA_TYPES:?}"
+            )));
+        }
+        let data = data.into();
+        if data.len() > MAX_DOCUMENT_BASE64_LEN {
+            return Err(Error::Invalid(format!(
+                "base64 document data is {} bytes, over the {MAX_DOCUMENT_BASE64_LEN}-byte limit",
+                data.len()
+            )));
+        }
+        Ok(UserContentBlock::Document(DocumentSource::Base64 { media_type, data }))
+    }
+
+    /// A URL document block (Claude fetches the URL). Errors on an empty URL.
+    pub fn document_url(url: impl Into<String>) -> Result<Self> {
+        let url = url.into();
+        if url.trim().is_empty() {
+            return Err(Error::Invalid("document url must be non-empty".into()));
+        }
+        Ok(UserContentBlock::Document(DocumentSource::Url { url }))
+    }
+
     /// Serializes to the wire content block the CLI accepts.
     pub fn to_wire(&self) -> Value {
         match self {
@@ -107,6 +162,15 @@ impl UserContentBlock {
                     ImageSource::Url { url } => json!({"type": "url", "url": url}),
                 };
                 json!({"type": "image", "source": source})
+            }
+            UserContentBlock::Document(source) => {
+                let source = match source {
+                    DocumentSource::Base64 { media_type, data } => {
+                        json!({"type": "base64", "media_type": media_type, "data": data})
+                    }
+                    DocumentSource::Url { url } => json!({"type": "url", "url": url}),
+                };
+                json!({"type": "document", "source": source})
             }
         }
     }
@@ -170,6 +234,29 @@ mod tests {
     #[test]
     fn image_url_rejects_empty() {
         assert!(UserContentBlock::image_url("   ").is_err());
+    }
+
+    #[test]
+    fn document_base64_and_url_wire() {
+        let pdf = UserContentBlock::document_base64("application/pdf", "JVBERi0=").unwrap();
+        assert_eq!(
+            pdf.to_wire(),
+            json!({"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0="}})
+        );
+        let url = UserContentBlock::document_url("https://ex.com/a.pdf").unwrap();
+        assert_eq!(
+            url.to_wire(),
+            json!({"type": "document", "source": {"type": "url", "url": "https://ex.com/a.pdf"}})
+        );
+    }
+
+    #[test]
+    fn document_rejects_bad_media_type_and_empty_url() {
+        assert!(matches!(
+            UserContentBlock::document_base64("application/zip", "x").unwrap_err(),
+            Error::Invalid(m) if m.contains("application/zip")
+        ));
+        assert!(UserContentBlock::document_url("").is_err());
     }
 
     #[test]
