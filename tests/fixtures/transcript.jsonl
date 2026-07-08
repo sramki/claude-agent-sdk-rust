@@ -1,0 +1,8 @@
+{"type":"user","uuid":"11111111-0000-4000-8000-000000000001","parentUuid":null,"sessionId":"f1f2f3f4-0000-4000-8000-000000000001","timestamp":"2024-01-01T00:00:00.000Z","cwd":"/repo","gitBranch":"main","version":"1.0","userType":"external","message":{"role":"user","content":"start"}}
+{"type":"assistant","uuid":"22222222-0000-4000-8000-000000000002","parentUuid":"11111111-0000-4000-8000-000000000001","sessionId":"f1f2f3f4-0000-4000-8000-000000000001","timestamp":"2024-01-01T00:00:01.000Z","requestId":"req_1","score":1e3,"ratio":1.50,"message":{"role":"assistant","content":"réply"}}
+{"type":"user","uuid":"33333333-0000-4000-8000-000000000003","parentUuid":"22222222-0000-4000-8000-000000000002","sessionId":"f1f2f3f4-0000-4000-8000-000000000001","message":{"role":"user","content":"branch A"}}
+{"type":"user","uuid":"44444444-0000-4000-8000-000000000004","parentUuid":"22222222-0000-4000-8000-000000000002","sessionId":"f1f2f3f4-0000-4000-8000-000000000001","message":{"role":"user","content":"branch B"}}
+
+{"type":"user","uuid":"55555555-0000-4000-8000-000000000005","parentUuid":"22222222-0000-4000-8000-000000000002","sessionId":"f1f2f3f4-0000-4000-8000-000000000001","isSidechain":true,"message":{"role":"user","content":"subagent"}}
+{"type":"user","uuid":"66666666-0000-4000-8000-000000000006","parentUuid":null,"sessionId":"f1f2f3f4-0000-4000-8000-000000000001","isMeta":true,"message":{"role":"user","content":"meta"}}
+{"type":"custom-title","customTitle":"My Session","sessionId":"f1f2f3f4-0000-4000-8000-000000000001","uuid":"77777777-0000-4000-8000-000000000007"}

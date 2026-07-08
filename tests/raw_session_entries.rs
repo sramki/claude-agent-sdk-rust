@@ -133,6 +133,59 @@ fn get_session_entries_round_trips_byte_for_byte() {
     assert_eq!(branch_texts.len(), 2, "raw read keeps BOTH fork branches");
 }
 
+/// Reads the **committed** fixture transcript through `get_session_entries`,
+/// reconstructs it, and asserts byte-for-byte equality — including a numeric
+/// line (`1e3` / `1.50`) that a parse→re-serialize `Value` round-trip would
+/// normalize, proving the raw reader preserves what the typed path cannot.
+#[test]
+fn committed_fixture_reconstructs_byte_for_byte() {
+    let _g = env_guard!();
+    let config = claude_config_dir();
+
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transcript.jsonl");
+    let raw = std::fs::read(&fixture).unwrap(); // source-of-truth bytes
+
+    // Place the fixture verbatim where the reader resolves it.
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("proj");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::mem::forget(tmp);
+    let pd = config.dir.join("projects").join(sanitize(&realpath(&cwd)));
+    std::fs::create_dir_all(&pd).unwrap();
+    let sid = "f1f2f3f4-0000-4000-8000-000000000001";
+    std::fs::copy(&fixture, pd.join(format!("{sid}.jsonl"))).unwrap();
+
+    let entries = get_session_entries(sid, Some(&cwd)).unwrap();
+
+    // (1) Byte-for-byte reconstruction of the fixture.
+    let raw_str = String::from_utf8(raw.clone()).unwrap();
+    let rebuilt = if raw_str.ends_with('\n') {
+        entries.join("\n") + "\n"
+    } else {
+        entries.join("\n")
+    };
+    assert_eq!(rebuilt.as_bytes(), raw.as_slice(), "fixture must reconstruct byte-for-byte");
+
+    // (2) The interior blank line and both fork branches survive.
+    assert!(entries.iter().any(|l| l.is_empty()), "blank line preserved");
+    let branches = entries
+        .iter()
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|v| v["message"]["content"].as_str().is_some_and(|c| c.starts_with("branch ")))
+        .count();
+    assert_eq!(branches, 2, "both fork branches present");
+
+    // (3) Contrast: a Value round-trip normalizes the numeric line; raw doesn't.
+    let numeric = entries.iter().find(|l| l.contains("\"score\":1e3")).expect("numeric line");
+    assert!(numeric.contains("1e3") && numeric.contains("1.50"), "raw keeps 1e3 / 1.50 verbatim");
+    let reserialized = serde_json::to_string(&serde_json::from_str::<Value>(numeric).unwrap()).unwrap();
+    assert_ne!(
+        &reserialized, numeric,
+        "a Value round-trip normalizes 1e3/1.50 (1000.0/1.5) — only the raw line is byte-exact"
+    );
+}
+
 /// The real `~/.claude` config home, or `None` if this machine has no sessions
 /// (so the test skips cleanly on CI / other machines).
 fn real_config_home() -> Option<PathBuf> {
