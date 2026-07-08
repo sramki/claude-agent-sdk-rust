@@ -56,6 +56,10 @@ behavioral discrepancies found. Store-layer test files map to the remaining buck
     subagent reconstruction, wired into `setup_query` for `query()`/`Client`.
   - `*_via_store` mutation variants (`mutations`).
   - Reusable conformance harness (`testing::run_session_store_conformance`).
+- **Typed multimodal input (non-upstream extension):** `input` module — `UserContentBlock`
+  (`text`/`image_base64`/`image_url`, validated: MIME allowlist + 15 MiB cap) + `user_message`
+  build the wire content blocks the CLI already accepts, for `Prompt::Messages`. Sending images
+  works via raw JSON too; this is the type-safe path.
 - **Lossless raw reader (non-upstream extension):** `get_session_entries` returns a session's
   transcript as verbatim raw lines — no envelope projection, no `build_conversation_chain` selection
   (all branches/forks/pre-compaction history), no re-serialization; byte-for-byte round-trippable.

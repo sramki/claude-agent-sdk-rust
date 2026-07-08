@@ -56,6 +56,7 @@
 
 mod chain;
 mod error;
+pub mod input;
 pub mod mcp;
 mod mutations;
 mod parse;
@@ -71,6 +72,7 @@ mod store_read;
 pub mod types;
 
 pub use error::{Error, Result};
+pub use input::{user_message, ImageSource, UserContentBlock};
 pub use mcp::{create_sdk_mcp_server, tool, SdkMcpTool, ToolAnnotations};
 pub use mutations::{
     delete_session, delete_session_via_store, fork_session, fork_session_via_store,

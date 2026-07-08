@@ -51,6 +51,9 @@ MSRV: Rust 1.83.
   bidirectional control protocol.
 - **In-process MCP tools** — `create_sdk_mcp_server` + `tool` run tools in your
   process (no IPC).
+- **Typed multimodal input** (extension) — `input::user_message` +
+  `UserContentBlock::{text, image_base64, image_url}` build validated text/image
+  content blocks (MIME allowlist + size cap) for `Prompt::Messages`.
 
 **Session reader** (filesystem, no CLI)
 
@@ -171,10 +174,10 @@ community ports surveyed, this is the only one that covers the session-history /
 | `claude-agent-sdk-rust` | ✓ | ✗ | ✗ | 25 |
 
 Figures are from each crate's published source / repository on the survey date;
-other crates may add features over time. Some ports offer things this one does
-not (e.g. typed multimodal image-input helpers) — see their docs. This crate
-additionally provides a lossless `get_session_entries` raw read that has no
-upstream equivalent.
+other crates may add features over time. This crate additionally provides two
+extensions beyond upstream: a lossless `get_session_entries` raw read, and
+typed multimodal image input (`input::UserContentBlock` — validated base64/URL
+image blocks).
 
 ## Scope
 
