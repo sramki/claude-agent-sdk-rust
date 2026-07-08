@@ -148,11 +148,18 @@ crates.io. This crate is distinguished on two axes: **parity with the Python SDK
 v0.2.110**, and **test coverage**.
 
 The Python SDK ships two halves — a live runtime *and* a session-history layer
-(reading `~/.claude` transcripts, an external `SessionStore`, live mirroring,
-import, store-backed resume). Most Rust ports implement only the runtime half.
-Of the community ports surveyed, this is the only one that also ports the
-session-history / `SessionStore` / mirroring layer — i.e. the only one at full
-parity with the Python SDK.
+(reading `~/.claude` transcripts, an external `SessionStore`, **live transcript
+mirroring**, import, store-backed resume). Most Rust ports implement only the
+runtime half.
+
+**This crate ports the complete public API surface of Python SDK v0.2.110 —
+including the session-history, `SessionStore`, and live-mirroring layer that the
+other surveyed ports omit.** Parity is verified by porting the upstream test
+suites test-for-test, not asserted informally. Two internal items remain
+unported — OTEL trace propagation and username→uid resolution for
+`Options.user` — and neither appears in the public API (see `CLAUDE.md`). Of the
+community ports surveyed, this is the only one that covers the session-history /
+`SessionStore` / mirroring half at all.
 
 | Crate (crates.io) | 10 hook events | in-proc MCP | session reader + `SessionStore` + mirror | `#[test]` fns |
 |---|:--:|:--:|:--:|--:|
