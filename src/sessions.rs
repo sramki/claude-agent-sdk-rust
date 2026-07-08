@@ -460,6 +460,40 @@ pub fn get_session_messages(
     Ok(entries_to_session_messages(&entries, limit, offset))
 }
 
+/// Reads a session's transcript as **verbatim raw lines** — the lossless
+/// counterpart to [`get_session_messages`].
+///
+/// Unlike [`get_session_messages`], this performs **no** processing:
+/// - no envelope projection (every field on every line is preserved),
+/// - no conversation-chain selection (every entry is returned — all branches,
+///   forks/edits/retries, and pre-compaction history, not just one leaf's path),
+/// - no JSON parse or re-serialization (each line is the exact source string,
+///   so nothing is reordered or normalized).
+///
+/// Every physical line is returned in file order, **including blank and
+/// non-JSON lines**. The source file byte-reconstructs as
+/// `entries.join("\n")` followed by the file's trailing newline (the CLI always
+/// LF-terminates transcript files) — i.e. a byte-for-byte round-trip.
+///
+/// This is a **non-upstream extension** (the Python SDK v0.2.110 has no
+/// equivalent); [`get_session_messages`] remains the parity-faithful reader.
+///
+/// Returns `Ok(vec![])` if the session is not found, and
+/// [`Error::InvalidSessionId`] if `session_id` is invalid. When `directory` is
+/// omitted, all project directories are searched.
+pub fn get_session_entries(session_id: &str, directory: Option<&Path>) -> Result<Vec<String>> {
+    if !validate_uuid(session_id) {
+        return Err(Error::InvalidSessionId(session_id.to_string()));
+    }
+    let content = match read_session_file(session_id, directory) {
+        Some(c) => c,
+        None => return Ok(Vec::new()),
+    };
+    // `.lines()` splits on `\n` (stripping a trailing `\r`), yields no phantom
+    // element for the file's final newline, and preserves interior blank lines.
+    Ok(content.lines().map(str::to_string).collect())
+}
+
 /// Lists subagent IDs for a session by scanning its `subagents/` directory
 /// (recursively, including nested `workflows/<runId>/`).
 ///

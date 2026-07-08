@@ -364,6 +364,30 @@ pub async fn get_session_messages_from_store(
     Ok(entries_to_session_messages(&filtered, limit, offset))
 }
 
+/// Reads a session's **full raw entries** from a [`SessionStore`] — the lossless
+/// counterpart to [`get_session_messages_from_store`]. Returns every stored
+/// entry verbatim (all fields, all branches, no chain selection or filtering),
+/// exactly as the store holds it.
+///
+/// Note: a store keeps parsed entries ([`SessionStoreEntry`] = a JSON map), so
+/// this preserves every *field* but is not byte-addressable the way the on-disk
+/// [`get_session_entries`](crate::get_session_entries) is — a store never had
+/// source bytes. Non-upstream extension.
+///
+/// Returns `Ok(vec![])` for an unknown session or a non-UUID `session_id`.
+pub async fn get_session_entries_from_store(
+    store: &dyn SessionStore,
+    session_id: &str,
+    directory: Option<&Path>,
+) -> Result<Vec<SessionStoreEntry>> {
+    if !validate_uuid(session_id) {
+        return Ok(Vec::new());
+    }
+    let project_key = crate::project_key_for_directory(directory);
+    let entries = store.load(&key(&project_key, session_id, None)).await?;
+    Ok(entries.unwrap_or_default())
+}
+
 /// Lists subagent IDs for a session from a [`SessionStore`]. Store-backed
 /// counterpart to [`list_subagents`](crate::list_subagents). Returns
 /// [`Error::Invalid`] if the store does not implement `list_subkeys`.

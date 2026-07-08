@@ -58,6 +58,11 @@ MSRV: Rust 1.83.
   reads (no full parse), newest-first, paging, optional git-worktree scanning.
 - **`get_session_messages`** — the reconstructed user/assistant conversation
   (walks the `parentUuid` DAG to the most-recent leaf, collapsing to one branch).
+- **`get_session_entries`** — *lossless* raw read (extension, beyond upstream
+  parity): every transcript line, verbatim, in file order — no envelope
+  projection, no chain selection (all branches / forks / pre-compaction history),
+  no re-serialization. Byte-for-byte round-trippable. `get_session_entries_from_store`
+  is the store-backed counterpart (field-lossless).
 - **`list_subagents`** / **`get_subagent_messages`** — subagent transcripts.
 
 **Session write ops**

@@ -56,6 +56,11 @@ behavioral discrepancies found. Store-layer test files map to the remaining buck
     subagent reconstruction, wired into `setup_query` for `query()`/`Client`.
   - `*_via_store` mutation variants (`mutations`).
   - Reusable conformance harness (`testing::run_session_store_conformance`).
+- **Lossless raw reader (non-upstream extension):** `get_session_entries` returns a session's
+  transcript as verbatim raw lines — no envelope projection, no `build_conversation_chain` selection
+  (all branches/forks/pre-compaction history), no re-serialization; byte-for-byte round-trippable.
+  `get_session_entries_from_store` is the store counterpart (field-lossless). Kept alongside the
+  parity-faithful `get_session_messages`, not replacing it.
 
 **Remaining:** nothing structural — the whole SDK surface is ported. Open items are the small
 fidelity notes (OTEL trace propagation not ported; username→uid resolution not done) and re-syncing
