@@ -140,6 +140,35 @@ $ cargo run --example list_sessions -- /my/proj  # one project directory
 The reader functions are `Result`-based; `limit = Some(0)` means "no limit"
 (matching the upstream `limit > 0` check).
 
+## How it compares (surveyed 2026-07-08)
+
+There is no official Anthropic Rust SDK (only Python and TypeScript are
+official). Several independent community ports of the Claude Agent SDK exist on
+crates.io. This crate is distinguished on two axes: **parity with the Python SDK
+v0.2.110**, and **test coverage**.
+
+The Python SDK ships two halves — a live runtime *and* a session-history layer
+(reading `~/.claude` transcripts, an external `SessionStore`, live mirroring,
+import, store-backed resume). Most Rust ports implement only the runtime half.
+Of the community ports surveyed, this is the only one that also ports the
+session-history / `SessionStore` / mirroring layer — i.e. the only one at full
+parity with the Python SDK.
+
+| Crate (crates.io) | 10 hook events | in-proc MCP | session reader + `SessionStore` + mirror | `#[test]` fns |
+|---|:--:|:--:|:--:|--:|
+| **this crate** | ✓ | ✓ | **✓** | **456** |
+| `claude-code-agent-sdk` | ✓ | ✓ | ✗ | 223 |
+| `claude-agent-sdk-rs` | ✗ (6) | ✓ | ✗ | 258 |
+| `claude-sdk` | ✗ | ✗ | ✗ | 138 |
+| `claude-agent-sdk` | ✗ (7) | ✓ | ✗ | 70 |
+| `claude-agent-sdk-rust` | ✓ | ✗ | ✗ | 25 |
+
+Figures are from each crate's published source / repository on the survey date;
+other crates may add features over time. Some ports offer things this one does
+not (e.g. typed multimodal image-input helpers) — see their docs. This crate
+additionally provides a lossless `get_session_entries` raw read that has no
+upstream equivalent.
+
 ## Scope
 
 The full SDK surface is ported: the reader, the live runtime (`query`/`Client`
