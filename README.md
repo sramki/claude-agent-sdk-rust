@@ -16,7 +16,7 @@ builds are reproducible while the API is still settling:
 
 ```toml
 [dependencies]
-claude-agent-sdk-rs = { git = "https://github.com/sramki/claude-agent-sdk-rust", rev = "c904c86" }
+claude-agent-sdk-rs = { git = "https://github.com/sramki/claude-agent-sdk-rust", rev = "fbefa6e" }
 ```
 
 Track the latest `main` instead (unpinned — moves as the repo does):
@@ -91,6 +91,21 @@ MSRV: Rust 1.83.
   session back and resumes it, even with no local copy.
 - **`import_session_to_store`** — replay a local session into a store.
 
+**Cartridge** (extension — `cartridge` module, `docs/cartridge-spec.md`)
+
+A Claude "adapter" surface for wiring session data into an external
+streaming/merge engine: **pure data + functions, nothing stateful** (no reader,
+stream, cursor, or watch — those stay the engine's).
+
+- **Locate** — `list_projects`, `discover_transcripts(recursive)` (finds nested
+  subagent/workflow transcripts, not just top-level), `projects_dir`.
+- **Interpret** — hot-path byte-scanners over `&[u8]` (`entry_id`, `entry_kind`,
+  total / never-panic) + `&Value` accessors (`envelope`, `to_typed`,
+  `content_blocks`, `blob_refs`).
+- **Dereference** — `resolve_blob` (paste-cache / file-history by native key,
+  on-demand).
+- **`UPSTREAM_VERSION`** — the pinned Claude Code schema the interpret fns assume.
+
 The reader degrades gracefully: a missing directory, unreadable file, or
 malformed line yields `Ok` (empty), not an error. Only invalid *input* (a bad
 UUID, an empty title) is an `Err`.
@@ -163,8 +178,9 @@ runtime half.
 
 **This crate ports the complete public API surface of Python SDK v0.2.110 —
 including the session-history, `SessionStore`, and live-mirroring layer that the
-other surveyed ports omit.** Parity is verified by porting the upstream test
-suites test-for-test, not asserted informally. Two internal items remain
+other surveyed ports omit.** Parity is verified — every one of v0.2.110's 126
+public names maps, and the upstream test suites are ported test-for-test, not
+asserted informally. Two internal items remain
 unported — OTEL trace propagation and username→uid resolution for
 `Options.user` — and neither appears in the public API (see `CLAUDE.md`). Of the
 community ports surveyed, this is the only one that covers the session-history /
@@ -180,10 +196,11 @@ community ports surveyed, this is the only one that covers the session-history /
 | `claude-agent-sdk-rust` | ✓ | ✗ | ✗ | 25 |
 
 Figures are from each crate's published source / repository on the survey date;
-other crates may add features over time. This crate additionally provides two
-extensions beyond upstream: a lossless `get_session_entries` raw read, and
-typed multimodal image input (`input::UserContentBlock` — validated base64/URL
-image blocks).
+other crates may add features over time. Beyond full upstream parity, this crate
+also ships several non-upstream extensions: lossless raw/typed transcript reads
+(`get_session_entries` / `get_session_entries_typed`), typed multimodal input
+(image + PDF, validated), and the `cartridge` adapter surface for external
+streaming engines. Extensions are marked as such and never touch the parity API.
 
 ## Scope
 
