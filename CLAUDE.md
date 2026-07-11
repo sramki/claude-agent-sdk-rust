@@ -56,6 +56,14 @@ behavioral discrepancies found. Store-layer test files map to the remaining buck
     subagent reconstruction, wired into `setup_query` for `query()`/`Client`.
   - `*_via_store` mutation variants (`mutations`).
   - Reusable conformance harness (`testing::run_session_store_conformance`).
+- **Cartridge (non-upstream extension) — `cartridge` module + `docs/cartridge-spec.md`:** the
+  Claude "adapter" surface for an external streaming/merge engine. Pure data + fns,
+  nothing stateful (no reader/stream/cursor/watch). Locate: `list_projects`, `discover_transcripts`
+  (recursive — catches nested subagents/workflows; real-data 224 top-level → 3,237 recursive),
+  `projects_dir`. Interpret hot-path byte-scan (`entry_id`/`entry_kind` over `&[u8]`, total/no-panic)
+  + downstream `&Value` (`envelope`, `to_typed`, `content_blocks`, `blob_refs`). Dereference:
+  `resolve_blob` (paste-cache/file-history by native key; on-demand; the imagePasteId-ordinal→key
+  indirection is a documented open item). `UPSTREAM_VERSION` const.
 - **Typed multimodal input (non-upstream extension):** `input` module — `UserContentBlock`
   (`text`/`image_base64`/`image_url`/`document_base64`/`document_url`, validated: MIME allowlist +
   size caps) + `user_message` build the wire content blocks the CLI accepts, for `Prompt::Messages`.

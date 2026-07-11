@@ -54,6 +54,7 @@
 //!
 //! MIT, matching the upstream Python SDK. See `LICENSE` and `NOTICE`.
 
+pub mod cartridge;
 mod chain;
 mod error;
 pub mod input;
@@ -72,6 +73,10 @@ mod store_read;
 pub mod types;
 
 pub use error::{Error, Result};
+pub use cartridge::{
+    blob_refs, discover_transcripts, entry_id, entry_kind, envelope, list_projects, resolve_blob,
+    to_typed, Blob, Envelope, ProjectInfo, TranscriptFile, UPSTREAM_VERSION,
+};
 pub use input::{user_message, DocumentSource, ImageSource, UserContentBlock};
 pub use mcp::{create_sdk_mcp_server, tool, SdkMcpTool, ToolAnnotations};
 pub use mutations::{
