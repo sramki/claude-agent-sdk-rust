@@ -173,59 +173,84 @@ fn collect_jsonl(
 // 2. Interpret — hot path (byte-scan)
 // ---------------------------------------------------------------------------
 
-/// Byte-scans a raw line for the native `uuid`. Total — returns `None` on a
-/// malformed line or an absent field; never allocates a DOM.
+/// Byte-scans a raw line for the native top-level `uuid`. Total — returns `None`
+/// on a malformed line or an absent field; never allocates a DOM.
 pub fn entry_id(line: &[u8]) -> Option<String> {
-    scan_str_field(line, "uuid").map(str::to_string)
+    scan_top_level_str(line, "uuid").map(str::to_string)
 }
 
-/// Byte-scans a raw line for the top-level `type` (Claude writes it first).
-/// Returns a borrow into `line`. Total — `None` on malformed/absent.
+/// Byte-scans a raw line for the top-level `type`. Returns a borrow into `line`.
+/// Total — `None` on malformed/absent.
 pub fn entry_kind(line: &[u8]) -> Option<&str> {
-    scan_str_field(line, "type")
+    scan_top_level_str(line, "type")
 }
 
-/// Finds `"key"` followed by `:` and returns the string value that follows, as
-/// a borrow. No escape handling — sufficient for `uuid`/`type` (plain ASCII, no
-/// escapes), which is the only intended use.
-fn scan_str_field<'a>(line: &'a [u8], key: &str) -> Option<&'a str> {
-    let mut needle = Vec::with_capacity(key.len() + 2);
-    needle.push(b'"');
-    needle.extend_from_slice(key.as_bytes());
-    needle.push(b'"');
-    let start = find_sub(line, &needle)?;
-    let mut i = start + needle.len();
-    while i < line.len() && line[i].is_ascii_whitespace() {
-        i += 1;
+/// Returns the string value of a **top-level** (brace-depth-1) string key.
+///
+/// Tracks object/array nesting and string state in a single byte-scan, so a
+/// nested key of the same name inside content (e.g. `"uuid"` in a tool result or
+/// pasted JSON) cannot spoof the match — the real top-level `uuid` sits at the
+/// end of a Claude line, after `message`. No unescaping (the value is returned
+/// verbatim as a borrow — `uuid`/`type` never contain escapes).
+fn scan_top_level_str<'a>(line: &'a [u8], key: &str) -> Option<&'a str> {
+    let n = line.len();
+    let mut i = 0usize;
+    let mut depth: i32 = 0;
+    while i < n {
+        match line[i] {
+            b'{' | b'[' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' | b']' => {
+                depth -= 1;
+                i += 1;
+            }
+            b'"' => {
+                let (tok, after) = read_json_string(line, i)?;
+                let mut j = after;
+                while j < n && line[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                // A string immediately followed by `:` at depth 1 is a top-level key.
+                if depth == 1 && j < n && line[j] == b':' {
+                    if tok == key.as_bytes() {
+                        let mut k = j + 1;
+                        while k < n && line[k].is_ascii_whitespace() {
+                            k += 1;
+                        }
+                        if k < n && line[k] == b'"' {
+                            let (val, _) = read_json_string(line, k)?;
+                            return std::str::from_utf8(val).ok();
+                        }
+                        return None; // value is not a string
+                    }
+                    i = j + 1; // not our key — its value is handled by the loop
+                } else {
+                    i = after; // a value string (or nested) — advance past it
+                }
+            }
+            _ => i += 1,
+        }
     }
-    if i >= line.len() || line[i] != b':' {
-        return None;
-    }
-    i += 1;
-    while i < line.len() && line[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if i >= line.len() || line[i] != b'"' {
-        return None;
-    }
-    i += 1;
-    let vstart = i;
-    while i < line.len() && line[i] != b'"' {
-        i += 1;
-    }
-    if i >= line.len() {
-        return None;
-    }
-    std::str::from_utf8(&line[vstart..i]).ok()
+    None
 }
 
-fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || needle.len() > haystack.len() {
-        return None;
+/// Reads a JSON string token starting at `start` (a `"`), returning the inner
+/// bytes (still escaped) and the index just past the closing quote. Backslash
+/// escapes are skipped so an escaped quote does not end the string. `None` on an
+/// unterminated string.
+fn read_json_string(line: &[u8], start: usize) -> Option<(&[u8], usize)> {
+    let inner = start + 1;
+    let mut i = inner;
+    while i < line.len() {
+        match line[i] {
+            b'\\' => i += 2,
+            b'"' => return Some((&line[inner..i], i + 1)),
+            _ => i += 1,
+        }
     }
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +401,17 @@ mod tests {
         assert_eq!(entry_id(line).as_deref(), Some("11111111-2222-4333-8444-555555555555"));
         // parentUuid must not be mistaken for uuid.
         assert_ne!(entry_id(line).as_deref(), Some("aa"));
+    }
+
+    #[test]
+    fn byte_scan_ignores_nested_keys_in_content() {
+        // The real top-level uuid sits at the END, after `message`; content
+        // contains a spoofing "uuid" and a nested "type". Neither may win.
+        let line = br#"{"type":"assistant","message":{"content":[{"type":"tool_result","content":"{\"uuid\":\"SPOOF\",\"type\":\"evil\"}"}]},"uuid":"REAL-uuid-at-end"}"#;
+        assert_eq!(entry_kind(line), Some("assistant")); // not "tool_result"/"evil"
+        assert_eq!(entry_id(line).as_deref(), Some("REAL-uuid-at-end")); // not "SPOOF"
+        // Escaped quotes inside the nested string don't derail the scan.
+        assert_ne!(entry_id(line).as_deref(), Some("SPOOF"));
     }
 
     #[test]
