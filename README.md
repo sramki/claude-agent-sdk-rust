@@ -16,7 +16,7 @@ builds are reproducible while the API is still settling:
 
 ```toml
 [dependencies]
-claude-agent-sdk-rs = { git = "https://github.com/sramki/claude-agent-sdk-rust", rev = "91a5ef3" }
+claude-agent-sdk-rs = { git = "https://github.com/sramki/claude-agent-sdk-rust", rev = "93e73dd" }
 ```
 
 Track the latest `main` instead (unpinned — moves as the repo does):
