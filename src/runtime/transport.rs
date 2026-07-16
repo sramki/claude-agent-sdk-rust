@@ -415,15 +415,64 @@ pub(crate) fn build_command(cli_path: &str, options: &ClaudeAgentOptions) -> Vec
 }
 
 /// Candidate CLI file names, most-specific first. On Windows a standard
-/// `npm install -g` produces a `claude.cmd` batch shim (this package ships no
-/// compiled binary), so `.exe` never resolves; we try the executable extensions
-/// the way Python's `shutil.which("claude")` does via `PATHEXT`.
+/// `npm install -g` produces a `claude.cmd` batch shim on `PATH`; we try the
+/// executable extensions the way Python's `shutil.which("claude")` does via
+/// `PATHEXT`. The shim itself is thin — see [`prefer_real_exe`] for why a
+/// resolved `.cmd`/`.bat` match is upgraded to the real binary it wraps.
 fn cli_candidate_names() -> &'static [&'static str] {
     if cfg!(windows) {
         &["claude.cmd", "claude.exe", "claude.bat", "claude"]
     } else {
         &["claude"]
     }
+}
+
+/// On Windows, an npm-installed `claude.cmd`/`claude.bat` is a thin shim
+/// (`"%dp0%\node_modules\@anthropic-ai\claude-code\bin\claude.exe" %*`) that
+/// execs a real compiled binary at a fixed, predictable location relative to
+/// itself. Passing a JSON-bearing argument (`--mcp-config`, `--json-schema`)
+/// through a batch file corrupts it in transit — `cmd.exe`'s re-quoting for
+/// `.cmd`/`.bat` targets mangles braces/quotes, confirmed via live
+/// reproduction against both flags — a bug class that does not exist for a
+/// genuine PE executable target, which Rust's `std::process::Command` spawns
+/// via the standard, correct argv-quoting instead. Upgrading to the real
+/// `.exe` here sidesteps the ENTIRE bug class at the source rather than
+/// special-casing each affected flag (this repo already special-cased
+/// `--mcp-config` via a temp file before this fix — `--json-schema` has no
+/// such file-path fallback, so that approach doesn't generalize).
+///
+/// Falls back to the resolved batch shim itself when the real binary isn't
+/// found at the expected relative path (a different install layout, or a
+/// future packaging change) — no functional regression, just no upgrade.
+#[cfg(windows)]
+fn prefer_real_exe(resolved: &Path) -> PathBuf {
+    let is_batch = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false);
+    if !is_batch {
+        return resolved.to_path_buf();
+    }
+    let Some(dir) = resolved.parent() else {
+        return resolved.to_path_buf();
+    };
+    let real_exe = dir
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code")
+        .join("bin")
+        .join("claude.exe");
+    if real_exe.is_file() {
+        real_exe
+    } else {
+        resolved.to_path_buf()
+    }
+}
+
+#[cfg(not(windows))]
+fn prefer_real_exe(resolved: &Path) -> PathBuf {
+    resolved.to_path_buf()
 }
 
 /// Finds the Claude Code CLI binary. Mirrors `_find_cli` (minus the bundled
@@ -437,7 +486,7 @@ pub(crate) fn find_cli() -> Result<String> {
             for name in names {
                 let candidate = dir.join(name);
                 if is_executable_file(&candidate) {
-                    return Ok(candidate.to_string_lossy().into_owned());
+                    return Ok(prefer_real_exe(&candidate).to_string_lossy().into_owned());
                 }
             }
         }
@@ -457,7 +506,7 @@ pub(crate) fn find_cli() -> Result<String> {
             for name in names {
                 let path = dir.join(name);
                 if path.is_file() {
-                    return Ok(path.to_string_lossy().into_owned());
+                    return Ok(prefer_real_exe(&path).to_string_lossy().into_owned());
                 }
             }
         }
@@ -947,6 +996,58 @@ mod tests {
         SystemPrompt, SystemPromptPreset, TaskBudget, ThinkingConfig, ThinkingDisplay, ToolsConfig,
     };
     use std::collections::HashMap;
+
+    // ── prefer_real_exe (Windows npm-shim → real-binary upgrade) ────────
+
+    #[cfg(windows)]
+    #[test]
+    fn prefer_real_exe_upgrades_a_cmd_shim_to_the_real_exe_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("claude.cmd");
+        std::fs::write(&shim, "@ECHO off").unwrap();
+        let real_exe_dir = dir
+            .path()
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("bin");
+        std::fs::create_dir_all(&real_exe_dir).unwrap();
+        let real_exe = real_exe_dir.join("claude.exe");
+        std::fs::write(&real_exe, "fake binary").unwrap();
+
+        assert_eq!(prefer_real_exe(&shim), real_exe);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prefer_real_exe_falls_back_to_the_shim_when_no_real_exe_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("claude.cmd");
+        std::fs::write(&shim, "@ECHO off").unwrap();
+        // No node_modules/@anthropic-ai/claude-code/bin/claude.exe created.
+
+        assert_eq!(prefer_real_exe(&shim), shim);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prefer_real_exe_is_a_noop_for_a_non_batch_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("claude.exe");
+        std::fs::write(&exe, "fake binary").unwrap();
+        // A sibling node_modules/.../claude.exe existing here must NOT
+        // redirect an already-real .exe target.
+        let real_exe_dir = dir
+            .path()
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("bin");
+        std::fs::create_dir_all(&real_exe_dir).unwrap();
+        std::fs::write(real_exe_dir.join("claude.exe"), "other binary").unwrap();
+
+        assert_eq!(prefer_real_exe(&exe), exe);
+    }
 
     fn base() -> ClaudeAgentOptions {
         ClaudeAgentOptions::default()
