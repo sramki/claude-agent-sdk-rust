@@ -282,7 +282,7 @@ async fn list_from_summaries(
     }
 
     // Paginate BEFORE the gap-fill loads so their count is bounded by page size.
-    slots.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    slots.sort_by_key(|s| std::cmp::Reverse(s.mtime));
     if offset > 0 {
         let start = offset.min(slots.len());
         slots.drain(..start);

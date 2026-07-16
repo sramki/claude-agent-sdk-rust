@@ -164,7 +164,7 @@ async fn resolve_continue_candidate(
     if sessions.is_empty() {
         return Ok(None);
     }
-    sessions.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.mtime));
     for cand in sessions {
         if !validate_uuid(&cand.session_id) {
             continue;

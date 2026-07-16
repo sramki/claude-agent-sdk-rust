@@ -1,0 +1,4 @@
+# Transcript fixtures are byte-for-byte round-tripped by tests — never let git's
+# line-ending conversion (e.g. Windows `core.autocrlf`) rewrite LF→CRLF on
+# checkout, which would break the byte-exact reconstruction assertions.
+tests/fixtures/*.jsonl -text

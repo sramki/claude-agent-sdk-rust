@@ -77,7 +77,7 @@ pub(crate) fn apply_sort_limit_offset(
     limit: Option<usize>,
     offset: usize,
 ) -> Vec<SessionInfo> {
-    sessions.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.last_modified));
     if offset > 0 {
         let start = offset.min(sessions.len());
         sessions = sessions.split_off(start);
@@ -125,7 +125,7 @@ fn list_sessions_for_project(
         .iter()
         .map(|wt| (wt.clone(), sanitize_path(wt)))
         .collect();
-    indexed.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    indexed.sort_by_key(|x| std::cmp::Reverse(x.1.len()));
 
     let all_dirents: Vec<PathBuf> = match std::fs::read_dir(&projects) {
         Ok(rd) => rd

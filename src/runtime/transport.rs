@@ -414,41 +414,51 @@ pub(crate) fn build_command(cli_path: &str, options: &ClaudeAgentOptions) -> Vec
     cmd
 }
 
+/// Candidate CLI file names, most-specific first. On Windows a standard
+/// `npm install -g` produces a `claude.cmd` batch shim (this package ships no
+/// compiled binary), so `.exe` never resolves; we try the executable extensions
+/// the way Python's `shutil.which("claude")` does via `PATHEXT`.
+fn cli_candidate_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["claude.cmd", "claude.exe", "claude.bat", "claude"]
+    } else {
+        &["claude"]
+    }
+}
+
 /// Finds the Claude Code CLI binary. Mirrors `_find_cli` (minus the bundled
 /// binary, which the Rust crate does not ship).
 pub(crate) fn find_cli() -> Result<String> {
-    // A standard `npm install -g` on Windows produces a `claude.cmd` batch
-    // shim, not a `claude.exe` — this package ships no compiled binary, so
-    // `.exe` never resolves via PATH on a default install.
-    let exe = if cfg!(windows) {
-        "claude.cmd"
-    } else {
-        "claude"
-    };
+    let names = cli_candidate_names();
 
-    // Search PATH.
+    // Search PATH (each dir × each candidate name).
     if let Some(paths) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&paths) {
-            let candidate = dir.join(exe);
-            if is_executable_file(&candidate) {
-                return Ok(candidate.to_string_lossy().into_owned());
+            for name in names {
+                let candidate = dir.join(name);
+                if is_executable_file(&candidate) {
+                    return Ok(candidate.to_string_lossy().into_owned());
+                }
             }
         }
     }
 
-    // Fallback well-known locations.
+    // Fallback well-known bin directories (each × each candidate name).
     if let Some(home) = home_dir() {
-        let locations = [
-            home.join(".npm-global/bin/claude"),
-            PathBuf::from("/usr/local/bin/claude"),
-            home.join(".local/bin/claude"),
-            home.join("node_modules/.bin/claude"),
-            home.join(".yarn/bin/claude"),
-            home.join(".claude/local/claude"),
+        let dirs = [
+            home.join(".npm-global/bin"),
+            PathBuf::from("/usr/local/bin"),
+            home.join(".local/bin"),
+            home.join("node_modules/.bin"),
+            home.join(".yarn/bin"),
+            home.join(".claude/local"),
         ];
-        for path in locations {
-            if path.is_file() {
-                return Ok(path.to_string_lossy().into_owned());
+        for dir in dirs {
+            for name in names {
+                let path = dir.join(name);
+                if path.is_file() {
+                    return Ok(path.to_string_lossy().into_owned());
+                }
             }
         }
     }
