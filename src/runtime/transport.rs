@@ -417,8 +417,11 @@ pub(crate) fn build_command(cli_path: &str, options: &ClaudeAgentOptions) -> Vec
 /// Finds the Claude Code CLI binary. Mirrors `_find_cli` (minus the bundled
 /// binary, which the Rust crate does not ship).
 pub(crate) fn find_cli() -> Result<String> {
+    // A standard `npm install -g` on Windows produces a `claude.cmd` batch
+    // shim, not a `claude.exe` — this package ships no compiled binary, so
+    // `.exe` never resolves via PATH on a default install.
     let exe = if cfg!(windows) {
-        "claude.exe"
+        "claude.cmd"
     } else {
         "claude"
     };
@@ -500,6 +503,9 @@ pub struct SubprocessCliTransport {
     shutdown_tx: Option<oneshot::Sender<()>>,
     reader_handle: Option<JoinHandle<()>>,
     stderr_handle: Option<JoinHandle<()>>,
+    // Holds the `--mcp-config` temp file (Windows only — see `connect`) alive
+    // for the transport's lifetime; dropped (and deleted) on transport drop.
+    mcp_config_tempfile: Option<tempfile::NamedTempFile>,
 }
 
 impl SubprocessCliTransport {
@@ -527,7 +533,50 @@ impl SubprocessCliTransport {
             shutdown_tx: None,
             reader_handle: None,
             stderr_handle: None,
+            mcp_config_tempfile: None,
         }
+    }
+
+    /// Rewrites an inline JSON `--mcp-config` argument to a temp-file path on
+    /// Windows.
+    ///
+    /// The CLI is invoked through a `claude.cmd` batch shim there (see
+    /// [`find_cli`]), and Rust's batch-file argument quoting can't reliably
+    /// round-trip a JSON blob through `cmd.exe`'s tokenizer — braces and
+    /// quotes get corrupted, and the corruption can bleed into the *next*
+    /// argument, observed live as `--mcp-config`'s JSON value and the
+    /// following `--input-format stream-json` merging into one garbled
+    /// argument. Writing the same JSON to a file and passing the path
+    /// instead sidesteps `cmd.exe` quoting entirely — the file's lifetime is
+    /// tied to `self` via `mcp_config_tempfile` so it outlives the spawned
+    /// child. No-op on non-Windows and when `--mcp-config`'s value is
+    /// already a path (the `McpServers::Path` case never emits inline JSON).
+    fn route_mcp_config_through_tempfile_on_windows(&mut self, cmd: &mut [String]) -> Result<()> {
+        if !cfg!(windows) {
+            return Ok(());
+        }
+        let Some(idx) = cmd.iter().position(|a| a == "--mcp-config") else {
+            return Ok(());
+        };
+        let Some(value) = cmd.get(idx + 1) else {
+            return Ok(());
+        };
+        if !value.trim_start().starts_with('{') {
+            return Ok(());
+        }
+        let mut file = tempfile::Builder::new()
+            .prefix("claude-mcp-config-")
+            .suffix(".json")
+            .tempfile()
+            .map_err(|e| {
+                Error::connection(format!("Failed to create MCP config temp file: {e}"))
+            })?;
+        use std::io::Write;
+        file.write_all(value.as_bytes())
+            .map_err(|e| Error::connection(format!("Failed to write MCP config temp file: {e}")))?;
+        cmd[idx + 1] = file.path().to_string_lossy().into_owned();
+        self.mcp_config_tempfile = Some(file);
+        Ok(())
     }
 
     async fn check_version(&self, cli_path: &str) {
@@ -594,7 +643,8 @@ impl Transport for SubprocessCliTransport {
             }
         }
 
-        let cmd = build_command(&cli_path, &self.options);
+        let mut cmd = build_command(&cli_path, &self.options);
+        self.route_mcp_config_through_tempfile_on_windows(&mut cmd)?;
         let pipe_stderr = self.options.stderr.is_some();
 
         let mut command = Command::new(&cmd[0]);
@@ -1214,6 +1264,52 @@ mod tests {
             "--mcp-config",
             "/cfg.json"
         ));
+    }
+
+    #[test]
+    fn mcp_config_tempfile_routes_inline_json_on_windows_only() {
+        let mut o = base();
+        let mut servers = HashMap::new();
+        servers.insert(
+            "fs".to_string(),
+            McpServerConfig::Stdio(McpStdioServerConfig {
+                command: "node".into(),
+                args: vec![],
+                env: HashMap::new(),
+            }),
+        );
+        o.mcp_servers = McpServers::Map(servers);
+        let mut cmd = build_command("/c", &o);
+        let mut transport = SubprocessCliTransport::new(o);
+        transport
+            .route_mcp_config_through_tempfile_on_windows(&mut cmd)
+            .unwrap();
+        let idx = cmd.iter().position(|a| a == "--mcp-config").unwrap();
+        if cfg!(windows) {
+            let path = &cmd[idx + 1];
+            assert!(!path.trim_start().starts_with('{'));
+            let contents = std::fs::read_to_string(path).unwrap();
+            assert!(contents.contains("\"mcpServers\""));
+            assert!(contents.contains("\"fs\""));
+            assert!(transport.mcp_config_tempfile.is_some());
+        } else {
+            assert!(cmd[idx + 1].trim_start().starts_with('{'));
+            assert!(transport.mcp_config_tempfile.is_none());
+        }
+    }
+
+    #[test]
+    fn mcp_config_tempfile_noop_for_path_variant() {
+        let mut o = base();
+        o.mcp_servers = McpServers::Path("/cfg.json".into());
+        let mut cmd = build_command("/c", &o);
+        let mut transport = SubprocessCliTransport::new(o);
+        transport
+            .route_mcp_config_through_tempfile_on_windows(&mut cmd)
+            .unwrap();
+        let idx = cmd.iter().position(|a| a == "--mcp-config").unwrap();
+        assert_eq!(cmd[idx + 1], "/cfg.json");
+        assert!(transport.mcp_config_tempfile.is_none());
     }
 
     #[test]

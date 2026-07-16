@@ -24,7 +24,7 @@ use claude_agent_sdk_rs::{
 /// Locates `claude` on `PATH` (matching the SDK's own discovery), or `None`.
 fn find_claude() -> Option<PathBuf> {
     let exe = if cfg!(windows) {
-        "claude.exe"
+        "claude.cmd"
     } else {
         "claude"
     };
