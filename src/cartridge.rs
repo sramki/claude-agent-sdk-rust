@@ -57,20 +57,19 @@ pub struct TranscriptFile {
     pub subpath: Option<String>,
     /// Whether this is a nested subagent/workflow transcript.
     pub is_subagent: bool,
-    /// For a subagent transcript, the ENTIRE sibling `<name>.meta.json` blob
-    /// verbatim (`agentType`, `description`, `spawnDepth`, `toolUseId`,
-    /// `worktreePath`, `name`, … — every field, forward-compatible). `None` for a
-    /// top-level file or an absent/unparseable sidecar. The consumer stamps the
-    /// whole value onto the subagent root (lose-no-detail) and promotes the key
-    /// fields it needs (`toolUseId` = the spawning Task tool_use → the spawn link;
-    /// `spawnDepth`, `agentType`, `description`).
-    pub meta: Option<serde_json::Value>,
 }
 
-/// Reads the ENTIRE sibling `<name>.meta.json` blob (`agent-abc.jsonl` →
-/// `agent-abc.meta.json`) as a JSON value; `None` when the sidecar is absent or
-/// unparseable — the meta is a convenience, never load-bearing for discovery.
-fn read_agent_meta(jsonl_path: &std::path::Path) -> Option<serde_json::Value> {
+/// Reads the ENTIRE sibling `<name>.meta.json` blob of a subagent transcript
+/// (`agent-abc.jsonl` → `agent-abc.meta.json`) as a JSON value — every field
+/// verbatim (`agentType`, `description`, `spawnDepth`, `toolUseId`, `worktreePath`,
+/// `name`, … forward-compatible). `None` when the sidecar is absent or unparseable.
+///
+/// **Deliberately SEPARATE from [`discover_transcripts`]** (which stays a cheap,
+/// stateless, path-only snapshot the follow loop can re-run freely). The sidecar is
+/// immutable — written once when the agent spawns — so a consumer reads it EXACTLY
+/// once per file, on demand, at the point of need (never per discovery pass, never
+/// per streamed line).
+pub fn read_agent_meta(jsonl_path: &std::path::Path) -> Option<serde_json::Value> {
     let meta_path = jsonl_path.with_extension("meta.json");
     let bytes = std::fs::read(&meta_path).ok()?;
     serde_json::from_slice(&bytes).ok()
@@ -167,7 +166,6 @@ fn collect_jsonl(
                 session_id,
                 subpath: None,
                 is_subagent: false,
-                meta: None,
             });
         } else {
             // <session>/rest.../file.jsonl — a nested subagent/workflow transcript.
@@ -176,14 +174,12 @@ fn collect_jsonl(
             if let Some(stripped) = sub.strip_suffix(".jsonl") {
                 sub = stripped.to_string();
             }
-            let meta = read_agent_meta(&path);
             out.push(TranscriptFile {
                 path,
                 project: project_name.to_string(),
                 session_id,
                 subpath: Some(sub),
                 is_subagent: true,
-                meta,
             });
         }
     }
