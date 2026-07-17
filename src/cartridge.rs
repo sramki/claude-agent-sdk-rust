@@ -57,32 +57,23 @@ pub struct TranscriptFile {
     pub subpath: Option<String>,
     /// Whether this is a nested subagent/workflow transcript.
     pub is_subagent: bool,
-    /// For a subagent transcript, the `toolUseId` from its sibling
-    /// `<name>.meta.json` — the id of the parent transcript's `Task`/`Agent`
-    /// tool_use block that SPAWNED this agent. This is the structural spawn link
-    /// (resolves across sessions at any depth); `None` for a top-level file or a
-    /// subagent whose sidecar is absent/unreadable.
-    pub tool_use_id: Option<String>,
-    /// For a subagent transcript, the `description` from its sibling
-    /// `<name>.meta.json` — the human task description given to the agent
-    /// (e.g. `Build ingest/placement backend`); `None` otherwise.
-    pub description: Option<String>,
+    /// For a subagent transcript, the ENTIRE sibling `<name>.meta.json` blob
+    /// verbatim (`agentType`, `description`, `spawnDepth`, `toolUseId`,
+    /// `worktreePath`, `name`, … — every field, forward-compatible). `None` for a
+    /// top-level file or an absent/unparseable sidecar. The consumer stamps the
+    /// whole value onto the subagent root (lose-no-detail) and promotes the key
+    /// fields it needs (`toolUseId` = the spawning Task tool_use → the spawn link;
+    /// `spawnDepth`, `agentType`, `description`).
+    pub meta: Option<serde_json::Value>,
 }
 
-/// Reads `toolUseId` + `description` from a subagent file's sibling
-/// `<name>.meta.json` (`agent-abc.jsonl` → `agent-abc.meta.json`). Returns
-/// `(None, None)` when the sidecar is absent or unparseable — the meta is a
-/// convenience, never load-bearing for discovery.
-fn read_agent_meta(jsonl_path: &std::path::Path) -> (Option<String>, Option<String>) {
+/// Reads the ENTIRE sibling `<name>.meta.json` blob (`agent-abc.jsonl` →
+/// `agent-abc.meta.json`) as a JSON value; `None` when the sidecar is absent or
+/// unparseable — the meta is a convenience, never load-bearing for discovery.
+fn read_agent_meta(jsonl_path: &std::path::Path) -> Option<serde_json::Value> {
     let meta_path = jsonl_path.with_extension("meta.json");
-    let Ok(bytes) = std::fs::read(&meta_path) else {
-        return (None, None);
-    };
-    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return (None, None);
-    };
-    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
-    (s("toolUseId"), s("description"))
+    let bytes = std::fs::read(&meta_path).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// Enumerates the project folders under the projects root (one `read_dir`).
@@ -176,8 +167,7 @@ fn collect_jsonl(
                 session_id,
                 subpath: None,
                 is_subagent: false,
-                tool_use_id: None,
-                description: None,
+                meta: None,
             });
         } else {
             // <session>/rest.../file.jsonl — a nested subagent/workflow transcript.
@@ -186,15 +176,14 @@ fn collect_jsonl(
             if let Some(stripped) = sub.strip_suffix(".jsonl") {
                 sub = stripped.to_string();
             }
-            let (tool_use_id, description) = read_agent_meta(&path);
+            let meta = read_agent_meta(&path);
             out.push(TranscriptFile {
                 path,
                 project: project_name.to_string(),
                 session_id,
                 subpath: Some(sub),
                 is_subagent: true,
-                tool_use_id,
-                description,
+                meta,
             });
         }
     }
@@ -479,32 +468,36 @@ mod tests {
         assert_eq!(refs, vec!["1".to_string(), "2".to_string(), "abc123".to_string()]);
     }
 
-    // read_agent_meta lifts toolUseId + description from the sibling
-    // `<name>.meta.json` (agent-abc.jsonl → agent-abc.meta.json); absent/garbage
-    // sidecar → (None, None), never an error.
+    // read_agent_meta lifts the WHOLE sibling `<name>.meta.json` blob
+    // (agent-abc.jsonl → agent-abc.meta.json); absent/garbage sidecar → None,
+    // never an error. Every field is preserved verbatim (lose-no-detail).
     #[test]
     fn read_agent_meta_from_sidecar() {
         let dir = tempfile::tempdir().unwrap();
         let jsonl = dir.path().join("agent-abc.meta-check.jsonl");
         std::fs::write(&jsonl, b"{}\n").unwrap();
 
-        // No sidecar yet → (None, None).
-        assert_eq!(read_agent_meta(&jsonl), (None, None));
+        // No sidecar yet → None.
+        assert_eq!(read_agent_meta(&jsonl), None);
 
-        // Sibling meta.json → both fields lifted.
+        // Sibling meta.json → the whole blob, all fields intact.
         let meta = dir.path().join("agent-abc.meta-check.meta.json");
         std::fs::write(
             &meta,
-            br#"{"agentType":"general-purpose","description":"Build ingest/placement backend","toolUseId":"toolu_01Y6wY2DB7KVYPVjHcg4b1M8","spawnDepth":1}"#,
+            br#"{"agentType":"general-purpose","description":"Build ingest/placement backend","toolUseId":"toolu_01Y6wY2DB7KVYPVjHcg4b1M8","spawnDepth":1,"worktreePath":"/wt/agent-abc"}"#,
         )
         .unwrap();
-        let (tu, desc) = read_agent_meta(&jsonl);
-        assert_eq!(tu.as_deref(), Some("toolu_01Y6wY2DB7KVYPVjHcg4b1M8"));
-        assert_eq!(desc.as_deref(), Some("Build ingest/placement backend"));
+        let v = read_agent_meta(&jsonl).expect("sidecar present");
+        assert_eq!(v.get("toolUseId").and_then(|x| x.as_str()), Some("toolu_01Y6wY2DB7KVYPVjHcg4b1M8"));
+        assert_eq!(v.get("description").and_then(|x| x.as_str()), Some("Build ingest/placement backend"));
+        assert_eq!(v.get("agentType").and_then(|x| x.as_str()), Some("general-purpose"));
+        assert_eq!(v.get("spawnDepth").and_then(|x| x.as_i64()), Some(1));
+        // Rare/unknown fields survive verbatim — forward-compatible.
+        assert_eq!(v.get("worktreePath").and_then(|x| x.as_str()), Some("/wt/agent-abc"));
 
-        // Garbage sidecar → (None, None), not a panic.
+        // Garbage sidecar → None, not a panic.
         std::fs::write(&meta, b"not json").unwrap();
-        assert_eq!(read_agent_meta(&jsonl), (None, None));
+        assert_eq!(read_agent_meta(&jsonl), None);
     }
 
     #[test]
