@@ -25,6 +25,17 @@ pub fn projects_dir() -> PathBuf {
     crate::paths::projects_dir()
 }
 
+/// The `.jsonl` transcript path for a `(project, session_key)` — the inverse of the
+/// [`TranscriptFile`] `project` + `session_key` a consumer already holds. A subagent
+/// session key is composite (`<parent>/subagents/agent-<id>`), so the path nests
+/// accordingly: `<projects>/<project>/<session_key>.jsonl`. Lets a consumer read a
+/// specific transcript's sibling `.meta.json` (via [`read_agent_meta`]) ON DEMAND —
+/// e.g. a subagent that appears after the initial discovery snapshot — WITHOUT a full
+/// re-`discover_transcripts` walk. Path-only; does not touch the filesystem.
+pub fn transcript_path(project: &str, session_key: &str) -> PathBuf {
+    projects_dir().join(project).join(format!("{session_key}.jsonl"))
+}
+
 // ---------------------------------------------------------------------------
 // 1. Locate
 // ---------------------------------------------------------------------------
@@ -494,6 +505,19 @@ mod tests {
         // Garbage sidecar → None, not a panic.
         std::fs::write(&meta, b"not json").unwrap();
         assert_eq!(read_agent_meta(&jsonl), None);
+    }
+
+    // transcript_path reconstructs `<projects>/<project>/<session_key>.jsonl` — a
+    // composite subagent key nests, a top-level key is one component.
+    #[test]
+    fn transcript_path_reconstructs_composite_key() {
+        let sub = transcript_path("proj", "parent-sid/subagents/agent-x");
+        assert!(
+            sub.ends_with("proj/parent-sid/subagents/agent-x.jsonl"),
+            "{sub:?}"
+        );
+        let top = transcript_path("proj", "top-sid");
+        assert!(top.ends_with("proj/top-sid.jsonl"), "{top:?}");
     }
 
     #[test]
